@@ -6,6 +6,8 @@ const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3000';
 
 export type ServiceType = 'DRIVER' | 'MECHANIC';
 
+export type OnboardingType = 'FREELANCE' | 'VENDOR_AFFILIATED';
+
 export type KycStatus =
   | 'PENDING'
   | 'DRAFT'
@@ -38,6 +40,7 @@ export interface CrewListItem {
   id: string;
   fullName: string | null;
   serviceType: ServiceType;
+  onboardingType?: OnboardingType | null;
   kycStatus: KycStatus;
   submittedAt: string | null;
   user: { phoneNumber: string | null; email: string | null };
@@ -66,6 +69,7 @@ export interface CrewDetails {
   id: string;
   fullName: string | null;
   serviceType: ServiceType;
+  onboardingType?: OnboardingType | null;
   kycStatus: KycStatus;
   submittedAt?: string | null;
   user: { id: string; email: string | null; phoneNumber: string | null; isActive: boolean };

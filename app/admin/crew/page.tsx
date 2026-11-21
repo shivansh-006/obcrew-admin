@@ -15,6 +15,7 @@ import {
   verifyCrew,
   type CrewListItem,
   type DocReviewStatus,
+  type OnboardingType,
   type ServiceType,
 } from '@/lib/crew-api';
 
@@ -25,6 +26,11 @@ const FILTERS: { label: string; value: ServiceType | 'ALL' }[] = [
   { label: 'DRIVER', value: 'DRIVER' },
   { label: 'MECHANIC', value: 'MECHANIC' },
 ];
+
+const ONBOARDING_LABEL: Record<OnboardingType, string> = {
+  FREELANCE: 'Freelancer',
+  VENDOR_AFFILIATED: 'Agency',
+};
 
 const DOC_STATUS_STYLE: Record<DocReviewStatus, string> = {
   PENDING: 'bg-slate-100 border-slate-200 text-slate-700',
@@ -92,6 +98,11 @@ function CrewRow({ crew, onDone }: { crew: CrewListItem; onDone: (message: strin
             >
               {crew.serviceType}
             </span>
+            {crew.onboardingType && ONBOARDING_LABEL[crew.onboardingType] && (
+              <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-100 text-slate-600">
+                {ONBOARDING_LABEL[crew.onboardingType]}
+              </span>
+            )}
           </div>
           <p className="text-xs text-slate-500">
             Phone: {crew.user?.phoneNumber || '-'} · ID: {crew.id}
