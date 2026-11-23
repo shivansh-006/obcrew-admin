@@ -8,40 +8,52 @@ export function useAuth() {
   const { user, token, isAuthenticated, setAuth, logout } = useAuthStore();
 
   const loginWithCredentials = async (email: string, password: string): Promise<void> => {
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
 
+    let response: Response;
     try {
-      const res = await fetch(`${backendUrl}/auth/admin/login`, {
+      response = await fetch(`${backendUrl}/auth/admin/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
       });
-
-      if (res.ok) {
-        const data = await res.json();
-        const adminUser: AdminUser = {
-          id: data.user?.id || 'admin-1',
-          name: data.user?.name || email.split('@')[0],
-          email: data.user?.email || email,
-          role: data.user?.role || 'ADMIN',
-          vendorId: data.user?.vendorId,
-        };
-
-        setAuth(adminUser, data.accessToken || data.token);
-        return;
-      }
     } catch (networkErr) {
-      console.warn('Backend offline at port 3001. Initiating local development session.', networkErr);
+      console.warn('Unable to reach the admin authentication service.', networkErr);
+      throw new Error('Unable to reach the authentication service. Check the backend connection and try again.');
     }
 
-    // Development fallback: enables frontend development without forcing backend running
-    const devUser: AdminUser = {
-      id: 'admin-dev-01',
-      name: email.split('@')[0],
-      email: email,
-      role: 'SUPERADMIN',
+    const data = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        data && typeof data === 'object' && 'message' in data && typeof data.message === 'string'
+          ? data.message
+          : 'The email or password was not accepted.';
+      throw new Error(message);
+    }
+
+    if (!data || typeof data !== 'object') {
+      throw new Error('The authentication service returned an invalid response.');
+    }
+
+    const authData = data as {
+      user?: Partial<AdminUser>;
+      accessToken?: unknown;
+      token?: unknown;
     };
-    setAuth(devUser, 'mock-dev-admin-token');
+    const token = authData.accessToken ?? authData.token;
+    if (typeof token !== 'string' || !token.trim()) {
+      throw new Error('The authentication service did not return an access token.');
+    }
+
+    const adminUser: AdminUser = {
+      id: authData.user?.id || 'admin-1',
+      name: authData.user?.name || email.split('@')[0],
+      email: authData.user?.email || email,
+      role: authData.user?.role || 'ADMIN',
+      vendorId: authData.user?.vendorId,
+    };
+
+    setAuth(adminUser, token);
   };
 
   const handleLogout = () => {

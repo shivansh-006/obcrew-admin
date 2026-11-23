@@ -96,8 +96,10 @@ obcrew-admin/
 | **Login** | `POST` | `/auth/login` | Authenticate with admin email/password or bypass token |
 | **Crew KYC** | `GET` | `/admin/crew/pending` | Fetch pending drivers & mechanics with document URLs |
 | **Crew KYC** | `PATCH` | `/admin/crew/:id/verify` | Approve or reject crew documents |
-| **Vendors** | `GET` | `/admin/vendor/pending` | Review corporate fleet agency applications |
-| **Vendors** | `PATCH` | `/admin/vendor/:id/verify` | Approve or reject vendor fleet agency |
+| **Vendors** | `GET` | `/admin/vendors/pending` | List registered/pending vendor agencies and approval statuses |
+| **Vendors** | `PATCH` | `/admin/vendors/:id/verify` | Approve, reject, or suspend a vendor agency (`{ status }`) |
+| **Vendor Fleet** | `GET` | `/vendor/fleet/surveillance` | Read the authenticated vendor's fleet (VENDOR role required) |
+| **Vendor Fleet** | `POST` | `/vendor/fleet/members` | Invite a driver using `{ vendorId, phoneNumber }` |
 | **Live Map** | `WS` | `obpark-maps` (port 3002) | Listen to `crew:location:update` events |
 | **Settlements** | `GET` | `/crew/wallet` & `/vendor/wallet` | Fetch wallet balances and payout transaction ledgers |
 | **Incidents** | `PATCH` | `/admin/quality/incidents/:id/resolve` | Adjudicate complaints and apply penalty strikes |
