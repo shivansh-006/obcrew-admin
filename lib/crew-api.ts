@@ -1,6 +1,4 @@
-import { useAuthStore } from '@/store/auth.store';
-
-const BASE_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3000';
+import { apiFetch, NetworkError } from '@/lib/api';
 
 // ---------- Types (match obpark-backend) ----------
 
@@ -109,21 +107,6 @@ export class CrewApiError extends Error {
 
 type QueryValue = string | number | undefined;
 
-function buildUrl(path: string, query?: Record<string, QueryValue>): string {
-  const url = new URL(path, BASE_URL);
-  if (query) {
-    Object.entries(query).forEach(([key, value]) => {
-      if (value !== undefined && value !== '') url.searchParams.set(key, String(value));
-    });
-  }
-  return url.toString();
-}
-
-function authHeader(): Record<string, string> {
-  const token = useAuthStore.getState().token;
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
 async function toError(res: Response): Promise<CrewApiError> {
   let message = '';
   try {
@@ -145,21 +128,14 @@ async function toError(res: Response): Promise<CrewApiError> {
 
 async function send(
   path: string,
-  init: { method?: string; body?: unknown; query?: Record<string, QueryValue> } = {}
+  init: { method?: 'GET' | 'PATCH'; body?: unknown; query?: Record<string, QueryValue> } = {}
 ): Promise<Response> {
-  const { method = 'GET', body, query } = init;
   let res: Response;
   try {
-    res = await fetch(buildUrl(path, query), {
-      method,
-      headers: {
-        ...authHeader(),
-        ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-      },
-      body: body !== undefined ? JSON.stringify(body) : undefined,
-    });
-  } catch {
-    throw new CrewApiError(0, 'Cannot reach the server. Check that the backend is running.');
+    res = await apiFetch(path, { method: init.method, body: init.body, query: init.query });
+  } catch (err) {
+    if (err instanceof NetworkError) throw new CrewApiError(0, err.message);
+    throw err;
   }
   if (!res.ok) throw await toError(res);
   return res;

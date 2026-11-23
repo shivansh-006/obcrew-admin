@@ -30,7 +30,7 @@ export function CrewErrorState({
     message = 'Your session has expired. Please sign in again.';
     action = (
       <Link
-        href={`/login?session_expired=true&next=${encodeURIComponent(pathname || '/admin/crew')}`}
+        href={`/login?expired=1&next=${encodeURIComponent(pathname || '/admin/crew')}`}
         className={
           variant === 'inline'
             ? 'font-semibold underline hover:text-red-800'

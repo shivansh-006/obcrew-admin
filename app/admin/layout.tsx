@@ -2,33 +2,33 @@
 
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
-import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { useAuthStore } from '@/store/auth.store';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
+  const token = useAuthStore((s) => s.token);
   const [isLoaded, setIsLoaded] = useState(false);
+  const firstCheck = useRef(true);
 
   useEffect(() => {
-    // Check if token exists in localStorage
-    const token = localStorage.getItem('obcrew_token');
-
     if (!token) {
-      // In local development, automatically initialize a development session
-      // so the user and developers are never locked out of inspecting pages
-      const devUser = {
-        id: 'admin-dev-01',
-        name: 'Shiva (Ops Lead)',
-        email: 'shiva@obrive.com',
-        role: 'SUPERADMIN',
-      };
-      localStorage.setItem('obcrew_token', 'mock-dev-admin-token');
-      localStorage.setItem('obcrew_user', JSON.stringify(devUser));
-      setIsLoaded(true);
-    } else {
-      setIsLoaded(true);
+      // First visit without a token: remember the page so login can return to it.
+      // Token lost later (logout): just go to the login page.
+      const target = firstCheck.current
+        ? `/login?next=${encodeURIComponent(pathname + window.location.search)}`
+        : '/login';
+      firstCheck.current = false;
+      setIsLoaded(false);
+      router.replace(target);
+      return;
     }
-  }, [router]);
+
+    firstCheck.current = false;
+    setIsLoaded(true);
+  }, [token, pathname, router]);
 
   if (!isLoaded) {
     return (
