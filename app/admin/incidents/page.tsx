@@ -13,7 +13,7 @@ export default function IncidentsPage() {
     <div className="space-y-6">
       <div>
         <h1 className={`${microgrammaBold.className} text-xl font-bold text-slate-900 tracking-wide`}>
-          Quality & Incident Disputes (Module 12)
+          Quality & Incident Disputes
         </h1>
         <p className="text-xs text-slate-500 mt-1">
           Review customer incident complaints, crew rating disputes, and adjudicate penalty strikes.
