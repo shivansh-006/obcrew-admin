@@ -12,6 +12,7 @@ import {
   LogOut,
   Radio,
   ChevronRight,
+  X,
 } from 'lucide-react';
 import { microgrammaBold } from '@/lib/fonts';
 import { useAuth } from '@/hooks/useAuth';
@@ -40,7 +41,7 @@ const NAV_GROUPS = [
   },
 ];
 
-export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
+export function Sidebar({ onNavigate, className = '' }: { onNavigate?: () => void; className?: string }) {
   const pathname = usePathname();
   const { user, logout } = useAuth();
 
@@ -49,7 +50,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const userRole = user?.role || 'Admin';
 
   return (
-    <div className="flex h-full w-full flex-col bg-white border-r border-slate-200/80 shadow-[1px_0_12px_rgba(0,0,0,0.02)] select-none">
+    <aside className={`flex h-full w-64 lg:w-72 shrink-0 flex-col bg-white border-r border-slate-200/80 shadow-[1px_0_12px_rgba(0,0,0,0.02)] select-none ${className}`}>
       {/* Brand Header */}
       <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between shrink-0 bg-white">
         <Link
@@ -57,20 +58,22 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           onClick={onNavigate}
           className="flex items-center gap-3 group focus:outline-none"
         >
-          {/* <div className="h-9 w-9 rounded-xl bg-[#074139] flex items-center justify-center text-[#95D0CC] shadow-sm transition-transform group-hover:scale-105">
-             
-          </div> */}
           <div>
             <span className={`${microgrammaBold.className} text-lg font-bold text-[#074139] tracking-wider block leading-none`}>
               OBCREW
             </span>
-            {/* <span className="text-[10px] text-slate-400 font-medium tracking-wider uppercase block mt-1">
-              Admin Ops
-            </span> */}
           </div>
         </Link>
-
-
+        {onNavigate && (
+          <button
+            onClick={onNavigate}
+            className="md:hidden p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
+            title="Close menu"
+            type="button"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       {/* Navigation Groups */}
@@ -129,6 +132,6 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           </button>
         </div>
       </div>
-    </div>
+    </aside>
   );
 }
