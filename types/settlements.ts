@@ -7,14 +7,38 @@ export type CommissionSplitType = 'DIRECT_85_15' | 'TRI_PARTY_70_15_15';
 export type LedgerStatus = 'SETTLED' | 'PENDING' | 'FAILED';
 
 export interface BillingSummary {
+  billingCycle: string;
+  cycleStartDate?: string;
+  cycleEndDate?: string;
+  cycleCommission?: number;
+  allTimePlatformCommission?: number;
   totalPlatformCommission: number;
   totalCrewPayoutsPending: number;
   totalVendorRetainersPending: number;
-  billingCycle: string;
+  cycleCrewPayoutsPending?: number;
+  cycleVendorRetainersPending?: number;
+  totalEscrowHeld?: number;
+  isCycleScoped?: boolean;
 }
 
 export interface BillingSummaryFilters {
   cycle?: string;
+}
+
+export interface GlobalLedgerQueryFilters {
+  page?: number;
+  limit?: number;
+  startDate?: string;
+  endDate?: string;
+  status?: 'SETTLED' | 'PENDING';
+}
+
+export interface GlobalLedgerResponse {
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  transactions: LedgerTransaction[];
 }
 
 export interface LedgerTransaction {

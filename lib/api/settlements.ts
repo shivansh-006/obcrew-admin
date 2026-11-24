@@ -2,6 +2,8 @@ import { apiClient } from '@/lib/api/client';
 import {
   BillingSummary,
   LedgerTransaction,
+  GlobalLedgerQueryFilters,
+  GlobalLedgerResponse,
   PendingCrewPayoutsResponse,
   PendingVendorPayoutsResponse,
   MarkCrewPaidDto,
@@ -141,24 +143,46 @@ export async function fetchPendingVendorPayouts(): Promise<PendingVendorPayoutsR
  * Backend: GET /crew/wallet/ledger/all
  * Roles: ADMIN_OBCREW, SUPER_ADMIN_OBCREW
  */
-export async function fetchGlobalSettlementLedger(params?: {
-  limit?: number;
-  offset?: number;
-  startDate?: string;
-  endDate?: string;
-}): Promise<LedgerTransaction[]> {
+export async function fetchGlobalSettlementLedger(
+  params?: GlobalLedgerQueryFilters,
+): Promise<GlobalLedgerResponse> {
   const searchParams = new URLSearchParams();
+  if (params?.page) searchParams.set('page', String(params.page));
   if (params?.limit) searchParams.set('limit', String(params.limit));
-  if (params?.offset) searchParams.set('offset', String(params.offset));
   if (params?.startDate) searchParams.set('startDate', params.startDate);
   if (params?.endDate) searchParams.set('endDate', params.endDate);
+  if (params?.status) searchParams.set('status', params.status);
 
   const query = searchParams.toString() ? `?${searchParams.toString()}` : '';
   const raw = await apiClient<{
-    total: number;
-    items: LedgerTransaction[];
+    total?: number;
+    page?: number;
+    limit?: number;
+    totalPages?: number;
+    transactions?: LedgerTransaction[];
+    items?: LedgerTransaction[];
   } | LedgerTransaction[]>(`/crew/wallet/ledger/all${query}`);
 
-  if (Array.isArray(raw)) return raw;
-  return raw?.items ?? [];
+  if (Array.isArray(raw)) {
+    return {
+      total: raw.length,
+      page: params?.page ?? 1,
+      limit: params?.limit ?? raw.length,
+      totalPages: 1,
+      transactions: raw,
+    };
+  }
+
+  // Explicitly read response.transactions per backend contract
+  const transactions = raw?.transactions ?? raw?.items ?? [];
+  const limit = raw?.limit ?? params?.limit ?? 50;
+  const total = raw?.total ?? transactions.length;
+
+  return {
+    total,
+    page: raw?.page ?? params?.page ?? 1,
+    limit,
+    totalPages: raw?.totalPages ?? (Math.ceil(total / limit) || 1),
+    transactions,
+  };
 }

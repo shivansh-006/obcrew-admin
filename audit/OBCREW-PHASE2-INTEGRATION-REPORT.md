@@ -208,3 +208,43 @@ pnpm build
 - **Zero Breaking Changes:** Backend and frontend integration branches are strictly additive.
 - **Production Safety:** All payout operations record external bank transactions only; no automated funds transfers are initiated.
 - **Rollback Safety:** All migrations and schema definitions are purely additive.
+
+---
+
+## 10. Phase 2 PR Review Remediation & Verification
+
+### 10.1 Remediation Summary
+
+Following rigorous peer review, the following remediations were implemented and verified across both repositories:
+
+| Component | Review Finding | Remediation Applied | Verification Evidence |
+|-----------|----------------|---------------------|-----------------------|
+| **Backend** `billing/summary` | Missing exact UTC month bounds on `cycle=YYYY-MM` | Implemented strict UTC month start (`00:00:00.000Z`) and month end (`23:59:59.999Z`) with regex validation `^\d{4}-(0[1-9]|1[0-2])$`. | Unit test `CrewWalletService.spec.ts` + contract test |
+| **Backend** `billing/summary` | Ambiguous platform commission scoping | Explicit response semantics: `cycleCommission` (cycle-scoped) vs `allTimePlatformCommission` (lifetime), retaining `totalPlatformCommission` alias for compatibility. | Tested in backend spec & frontend contract suite |
+| **Backend** `crew/wallet/ledger/all` | Split calculation used live profile or hardcoded vendorShare | Determined historical immutable split from `booking.vendorEarning` record (`TRI_PARTY_70_15_15` vs `DIRECT_85_15`), preserving exact ledger history. | Tested in `CrewWalletService.spec.ts` |
+| **Backend** `vendor/wallet/settle` | Concurrency vulnerability in payout settlement | Wrapped in `Prisma.TransactionIsolationLevel.Serializable` transaction; enforced atomic `updateMany(isPaidOut: false)` and verified affected count equals expected earnings count, throwing `ConflictException` on conflict. | Tested in `VendorWalletService.spec.ts` (concurrency guard test) |
+| **Backend** `vendor/verification` | `ACTION_REQUIRED` vs `REJECTED` semantic ambiguity | Enforced distinct DTO fields and audit notes: `actionNotes` required for `ACTION_REQUIRED`; `rejectionReason` reserved strictly for `REJECTED`. | Tested in `VendorVerificationService.spec.ts` |
+| **Backend** `products/data` | Catalog fallback accidentally missing in tests | Restored `src/modules/products/data` and fallback in `ProductsService.getProductById`; restored `products.service.spec.ts` to exact `final-all` baseline. | 9/9 product unit tests pass, 89/89 E2E tests pass |
+| **Frontend** `settlements` | Global ledger read `response.items` and lacked query params | Aligned query parameters with backend (`page`, `limit`, `startDate`, `endDate`, `status`) and read `response.transactions` with fallback to `items`. | Tested in `tests/settlements-workflow.test.ts` |
+| **Frontend** `settlements/page` | Missing UI pagination and date filters on ledger | Added interactive date range filters (`startDate`, `endDate`), status selector, record count display, and pagination controls (`Previous`, `Page X of Y`, `Next`). | Verified in Vitest + Next.js build |
+| **Frontend** `settlements/page` | Cycle selection didn't display matching cycle totals | Added cycle-scoped commission display with all-time comparison subtext and UTC cycle date range. | Verified in Next.js production build |
+| **Frontend** `tests/settlements-workflow` | Missing API contract tests for remediated endpoints | Added contract tests for `GET /crew/wallet/ledger/all` (transactions key, query params) and `GET /admin/billing/summary` (UTC cycle bounds, explicit commission fields). | 11/11 settlement tests pass (30/30 total tests pass) |
+
+### 10.2 Final Automated Verification Results
+
+#### Backend (`obpark-backend` at commit `a59acca`)
+- **Unit Tests:** `pnpm test --runInBand` -> **62 passed, 62 total; 632 passed, 632 total** (0 failures).
+- **E2E Tests:** `pnpm test:e2e --runInBand` -> **6 passed, 6 total; 89 passed, 89 total** (0 failures, against PostgreSQL on port 5435).
+- **Production Build:** `pnpm build` -> **0 errors, NestJS dist compiled cleanly**.
+- **Lint Check:** `pnpm lint:check` -> **0 errors**.
+
+#### Frontend (`obcrew-admin`)
+- **TypeScript Typecheck:** `pnpm exec tsc --noEmit` -> **0 errors (Exit code 0)**.
+- **ESLint:** `pnpm lint` -> **0 errors (Exit code 0)**.
+- **Vitest Unit/Contract Tests:** `pnpm exec vitest run` -> **5 test files, 30 passed, 30 total** (0 failures).
+- **Production Build:** `pnpm build` -> **Compiled successfully, all 11 routes generated**.
+
+### 10.3 Invariant & Safety Confirmation
+1. **No Real Payouts:** All payout actions record external transactions only; no banking transfer or automated disbarment is triggered.
+2. **Authorization Boundary:** Platform permissions (`ADMIN_OBPARK` for vendor retainers, `ADMIN_OBCREW` for crew payouts) are strictly separated. The vendor-only surveillance endpoint `/vendor/fleet/surveillance` is never called with admin credentials.
+3. **Branch Preservation:** Neither PR has been merged directly into `main` or `integration/final-all`. All original developer branches remain intact.

@@ -14,6 +14,9 @@ import {
   ArrowRight,
   ShieldAlert,
   Info,
+  ChevronLeft,
+  ChevronRight,
+  Filter,
 } from 'lucide-react';
 import { microgrammaBold } from '@/lib/fonts';
 import { formatCurrency, formatDateTime, exportToCSV } from '@/lib/utils';
@@ -32,6 +35,7 @@ import {
   BackendPendingVendorPayout,
   PendingCrewPayout,
   LedgerTransaction,
+  GlobalLedgerQueryFilters,
 } from '@/types/settlements';
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -61,16 +65,36 @@ export default function SettlementsPage() {
     return `${year}-${month}`;
   });
 
+  // Global Ledger Filters & Pagination State
+  const [ledgerPage, setLedgerPage] = useState<number>(1);
+  const [ledgerLimit, setLedgerLimit] = useState<number>(20);
+  const [ledgerStartDate, setLedgerStartDate] = useState<string>('');
+  const [ledgerEndDate, setLedgerEndDate] = useState<string>('');
+  const [ledgerStatus, setLedgerStatus] = useState<'' | 'SETTLED' | 'PENDING'>('');
+
+  const ledgerFilters: GlobalLedgerQueryFilters = useMemo(
+    () => ({
+      page: ledgerPage,
+      limit: ledgerLimit,
+      ...(ledgerStartDate ? { startDate: ledgerStartDate } : {}),
+      ...(ledgerEndDate ? { endDate: ledgerEndDate } : {}),
+      ...(ledgerStatus ? { status: ledgerStatus } : {}),
+    }),
+    [ledgerPage, ledgerLimit, ledgerStartDate, ledgerEndDate, ledgerStatus]
+  );
+
   // Queries (all active against authoritative backend with PR #36 remediation)
   const pendingCrewPayoutsQuery = usePendingCrewPayoutsQuery();
   const billingSummaryQuery = useBillingSummaryQuery(selectedCycle, true);
   const pendingVendorsQuery = usePendingVendorPayoutsQuery(true);
-  const globalLedgerQuery = useGlobalSettlementLedgerQuery(true);
+  const globalLedgerQuery = useGlobalSettlementLedgerQuery(ledgerFilters, true);
 
   // Computed values
   const pendingCrews: PendingCrewPayout[] = pendingCrewPayoutsQuery.data?.crews ?? [];
   const pendingVendors: BackendPendingVendorPayout[] = pendingVendorsQuery.data?.vendors ?? [];
-  const globalLedger: LedgerTransaction[] = globalLedgerQuery.data ?? [];
+  const globalLedger: LedgerTransaction[] = globalLedgerQuery.data?.transactions ?? [];
+  const totalLedgerRecords = globalLedgerQuery.data?.total ?? 0;
+  const totalLedgerPages = globalLedgerQuery.data?.totalPages ?? 1;
 
   const totalPendingCrewAmount = useMemo(() => {
     return pendingCrews.reduce((acc, c) => acc + (c.pendingAmount || 0), 0);
@@ -244,23 +268,38 @@ export default function SettlementsPage() {
         {/* Card 1: Platform Commission Split Model */}
         <div className="p-5 rounded-xl bg-white border border-slate-200/80 shadow-sm space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500 font-medium">Platform Fee Commission Model</span>
+            <span className="text-xs text-slate-500 font-medium">Platform Fee Commission ({selectedCycle})</span>
             <div className="h-7 w-7 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center">
               <ReceiptText className="h-3.5 w-3.5" />
             </div>
           </div>
           <div>
             <p className={`${microgrammaBold.className} text-xl font-bold text-emerald-700`}>
-              {billingSummaryQuery.data?.totalPlatformCommission !== undefined
-                ? formatCurrency(billingSummaryQuery.data.totalPlatformCommission)
-                : '15% Platform Split'}
+              {billingSummaryQuery.data?.cycleCommission !== undefined
+                ? formatCurrency(billingSummaryQuery.data.cycleCommission)
+                : billingSummaryQuery.data?.totalPlatformCommission !== undefined
+                  ? formatCurrency(billingSummaryQuery.data.totalPlatformCommission)
+                  : '15% Platform Split'}
             </p>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-[10px] text-slate-500">
+                All-Time:{' '}
+                <strong className="text-slate-700">
+                  {billingSummaryQuery.data?.allTimePlatformCommission !== undefined
+                    ? formatCurrency(billingSummaryQuery.data.allTimePlatformCommission)
+                    : '—'}
+                </strong>
+              </span>
+            </div>
             <span className="text-[10px] text-slate-400 block mt-0.5">
               Freelance: 85% Crew / 15% Platform · Tri-Party: 70% Crew / 15% Agency / 15% Platform
             </span>
           </div>
           <span className="text-[10px] text-slate-400 block font-mono">
             GET /admin/billing/summary · Cycle: {selectedCycle}
+            {billingSummaryQuery.data?.cycleStartDate && billingSummaryQuery.data?.cycleEndDate && (
+              <span> ({billingSummaryQuery.data.cycleStartDate.slice(0, 10)} to {billingSummaryQuery.data.cycleEndDate.slice(0, 10)})</span>
+            )}
           </span>
         </div>
 
@@ -280,9 +319,16 @@ export default function SettlementsPage() {
               <span className="text-[10px] text-slate-400">Backend connectivity error</span>
             </div>
           ) : (
-            <p className={`${microgrammaBold.className} text-2xl font-bold text-slate-900`}>
-              {formatCurrency(totalPendingCrewAmount)}
-            </p>
+            <div>
+              <p className={`${microgrammaBold.className} text-2xl font-bold text-slate-900`}>
+                {formatCurrency(totalPendingCrewAmount)}
+              </p>
+              {billingSummaryQuery.data?.cycleCrewPayoutsPending !== undefined && (
+                <span className="text-[10px] text-slate-500 block mt-0.5">
+                  Cycle Pending: {formatCurrency(billingSummaryQuery.data.cycleCrewPayoutsPending)}
+                </span>
+              )}
+            </div>
           )}
           <span className="text-[10px] text-slate-400 block font-mono">
             GET /admin/crew/payouts/pending · {pendingCrews.length} partner(s) in queue
@@ -305,9 +351,16 @@ export default function SettlementsPage() {
               <span className="text-[10px] text-slate-400">Requires ADMIN_OBPARK</span>
             </div>
           ) : (
-            <p className={`${microgrammaBold.className} text-2xl font-bold text-slate-900`}>
-              {formatCurrency(totalPendingVendorAmount)}
-            </p>
+            <div>
+              <p className={`${microgrammaBold.className} text-2xl font-bold text-slate-900`}>
+                {formatCurrency(totalPendingVendorAmount)}
+              </p>
+              {billingSummaryQuery.data?.cycleVendorRetainersPending !== undefined && (
+                <span className="text-[10px] text-slate-500 block mt-0.5">
+                  Cycle Pending: {formatCurrency(billingSummaryQuery.data.cycleVendorRetainersPending)}
+                </span>
+              )}
+            </div>
           )}
           <span className="text-[10px] text-slate-400 block font-mono">
             GET /vendor/wallet/admin/pending · {pendingVendors.length} agency(ies)
@@ -590,7 +643,7 @@ export default function SettlementsPage() {
       {/* Tab 3: Global Settled Ledgers Table */}
       {activeTab === 'GLOBAL_LEDGER' && (
         <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+          <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <h3 className={`${microgrammaBold.className} text-xs font-bold text-slate-900`}>
                 Global Booking Commission Splits Ledger
@@ -599,9 +652,66 @@ export default function SettlementsPage() {
                 Real-time transaction splits (85/15 freelance or 70/15/15 tri-party) verified across the entire platform.
               </p>
             </div>
-            <span className="text-[11px] text-slate-400 font-mono">
-              Total Records: {globalLedger.length}
-            </span>
+
+            {/* Ledger Filters */}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs">
+                <span className="text-[10px] font-semibold text-slate-500">From:</span>
+                <input
+                  type="date"
+                  value={ledgerStartDate}
+                  onChange={(e) => {
+                    setLedgerStartDate(e.target.value);
+                    setLedgerPage(1);
+                  }}
+                  className="bg-transparent text-[11px] text-slate-700 outline-none cursor-pointer"
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5 bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-xs">
+                <span className="text-[10px] font-semibold text-slate-500">To:</span>
+                <input
+                  type="date"
+                  value={ledgerEndDate}
+                  onChange={(e) => {
+                    setLedgerEndDate(e.target.value);
+                    setLedgerPage(1);
+                  }}
+                  className="bg-transparent text-[11px] text-slate-700 outline-none cursor-pointer"
+                />
+              </div>
+
+              <select
+                value={ledgerStatus}
+                onChange={(e) => {
+                  setLedgerStatus(e.target.value as '' | 'SETTLED' | 'PENDING');
+                  setLedgerPage(1);
+                }}
+                className="bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1 text-[11px] font-medium text-slate-700 outline-none cursor-pointer"
+              >
+                <option value="">All Statuses</option>
+                <option value="SETTLED">SETTLED</option>
+                <option value="PENDING">PENDING</option>
+              </select>
+
+              {(ledgerStartDate || ledgerEndDate || ledgerStatus) && (
+                <button
+                  onClick={() => {
+                    setLedgerStartDate('');
+                    setLedgerEndDate('');
+                    setLedgerStatus('');
+                    setLedgerPage(1);
+                  }}
+                  className="text-[11px] text-slate-500 hover:text-slate-800 underline px-1"
+                >
+                  Reset
+                </button>
+              )}
+
+              <span className="text-[11px] text-slate-400 font-mono ml-1">
+                {totalLedgerRecords} record{totalLedgerRecords !== 1 ? 's' : ''}
+              </span>
+            </div>
           </div>
 
           {globalLedgerQuery.isLoading ? (
@@ -643,68 +753,102 @@ export default function SettlementsPage() {
               </div>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50 text-slate-500 font-semibold uppercase text-[10px] border-b border-slate-100">
-                  <tr>
-                    <th className="py-2.5 px-3">Booking Code</th>
-                    <th className="py-2.5 px-3">Split Model</th>
-                    <th className="py-2.5 px-3 text-right">Gross Trip</th>
-                    <th className="py-2.5 px-3 text-right">Crew Share</th>
-                    <th className="py-2.5 px-3 text-right">Vendor Share</th>
-                    <th className="py-2.5 px-3 text-right">Platform Fee</th>
-                    <th className="py-2.5 px-3 text-center">Status</th>
-                    <th className="py-2.5 px-3 text-right">Date</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {globalLedger.map((tx) => (
-                    <tr key={tx.id} className="hover:bg-slate-50/60 transition-colors">
-                      <td className="py-2.5 px-3 font-mono font-semibold text-slate-900">
-                        {tx.bookingCode || tx.bookingId.slice(0, 8)}
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                            tx.splitType === 'TRI_PARTY_70_15_15'
-                              ? 'bg-indigo-50 text-indigo-700 border border-indigo-100'
-                              : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
-                          }`}
-                        >
-                          {tx.splitType === 'TRI_PARTY_70_15_15' ? '70/15/15 Tri-Party' : '85/15 Direct'}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-medium text-slate-900">
-                        {formatCurrency(tx.tripAmount)}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-medium text-emerald-700">
-                        {formatCurrency(tx.crewShare)}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-medium text-indigo-700">
-                        {tx.vendorShare ? formatCurrency(tx.vendorShare) : '—'}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-medium text-slate-700">
-                        {formatCurrency(tx.platformCommission)}
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        <span
-                          className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                            tx.status === 'SETTLED'
-                              ? 'bg-emerald-100 text-emerald-800'
-                              : 'bg-amber-100 text-amber-800'
-                          }`}
-                        >
-                          {tx.status}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-right text-slate-500 text-[11px]">
-                        {formatDateTime(tx.createdAt)}
-                      </td>
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-500 font-semibold uppercase text-[10px] border-b border-slate-100">
+                    <tr>
+                      <th className="py-2.5 px-3">Booking Code</th>
+                      <th className="py-2.5 px-3">Split Model</th>
+                      <th className="py-2.5 px-3 text-right">Gross Trip</th>
+                      <th className="py-2.5 px-3 text-right">Crew Share</th>
+                      <th className="py-2.5 px-3 text-right">Vendor Share</th>
+                      <th className="py-2.5 px-3 text-right">Platform Fee</th>
+                      <th className="py-2.5 px-3 text-center">Status</th>
+                      <th className="py-2.5 px-3 text-right">Date</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 text-slate-700">
+                    {globalLedger.map((tx) => (
+                      <tr key={tx.id} className="hover:bg-slate-50/60 transition-colors">
+                        <td className="py-2.5 px-3 font-mono font-semibold text-slate-900">
+                          {tx.bookingCode || tx.bookingId.slice(0, 8)}
+                        </td>
+                        <td className="py-2.5 px-3">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              tx.splitType === 'TRI_PARTY_70_15_15'
+                                ? 'bg-indigo-50 text-indigo-700 border border-indigo-100'
+                                : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                            }`}
+                          >
+                            {tx.splitType === 'TRI_PARTY_70_15_15' ? '70/15/15 Tri-Party' : '85/15 Direct'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-medium text-slate-900">
+                          {formatCurrency(tx.tripAmount)}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-medium text-emerald-700">
+                          {formatCurrency(tx.crewShare)}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-medium text-indigo-700">
+                          {tx.vendorShare ? formatCurrency(tx.vendorShare) : '—'}
+                        </td>
+                        <td className="py-2.5 px-3 text-right font-medium text-slate-700">
+                          {formatCurrency(tx.platformCommission)}
+                        </td>
+                        <td className="py-2.5 px-3 text-center">
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              tx.status === 'SETTLED'
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-amber-100 text-amber-800'
+                            }`}
+                          >
+                            {tx.status}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 text-right text-slate-500 text-[11px]">
+                          {formatDateTime(tx.createdAt)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination Controls */}
+              <div className="p-3 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-500">
+                <span>
+                  Showing {totalLedgerRecords > 0 ? (ledgerPage - 1) * ledgerLimit + 1 : 0} to{' '}
+                  {Math.min(ledgerPage * ledgerLimit, totalLedgerRecords)} of {totalLedgerRecords} transactions
+                </span>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setLedgerPage((p) => Math.max(1, p - 1))}
+                    disabled={ledgerPage <= 1}
+                    className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Previous page"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+
+                  <span className="font-medium text-slate-700">
+                    Page {ledgerPage} of {totalLedgerPages}
+                  </span>
+
+                  <button
+                    onClick={() => setLedgerPage((p) => Math.min(totalLedgerPages, p + 1))}
+                    disabled={ledgerPage >= totalLedgerPages}
+                    className="p-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
+                    title="Next page"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+            </>
           )}
         </div>
       )}

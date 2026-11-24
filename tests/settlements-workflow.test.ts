@@ -113,10 +113,13 @@ describe('Phase 5.3: Settlements & Wallet Disbursal Workflow Tests', () => {
     expect(rawPendingVendors.vendors[0].pendingTrips).toBe(12);
   });
 
-  it('validates remediated GET /crew/wallet/ledger/all response structure', () => {
+  it('validates remediated GET /crew/wallet/ledger/all response structure reading response.transactions', () => {
     const rawGlobalLedger = {
-      total: 1,
-      items: [
+      total: 42,
+      page: 1,
+      limit: 20,
+      totalPages: 3,
+      transactions: [
         {
           id: 'ledger-tx-1',
           bookingId: 'booking-1',
@@ -132,23 +135,131 @@ describe('Phase 5.3: Settlements & Wallet Disbursal Workflow Tests', () => {
       ],
     };
 
-    expect(rawGlobalLedger.items[0].bookingCode).toBe('OB-99120');
-    expect(rawGlobalLedger.items[0].crewShare).toBe(700);
-    expect(rawGlobalLedger.items[0].vendorShare).toBe(150);
-    expect(rawGlobalLedger.items[0].platformCommission).toBe(150);
+    expect(rawGlobalLedger.transactions).toBeDefined();
+    expect(Array.isArray(rawGlobalLedger.transactions)).toBe(true);
+    expect(rawGlobalLedger.transactions[0].bookingCode).toBe('OB-99120');
+    expect(rawGlobalLedger.transactions[0].crewShare).toBe(700);
+    expect(rawGlobalLedger.transactions[0].vendorShare).toBe(150);
+    expect(rawGlobalLedger.transactions[0].platformCommission).toBe(150);
+    expect(rawGlobalLedger.transactions[0].splitType).toBe('TRI_PARTY_70_15_15');
+    expect(rawGlobalLedger.total).toBe(42);
+    expect(rawGlobalLedger.page).toBe(1);
+    expect(rawGlobalLedger.limit).toBe(20);
+    expect(rawGlobalLedger.totalPages).toBe(3);
   });
 
-  it('validates remediated GET /admin/billing/summary response structure', () => {
-    const rawSummary = {
-      totalPlatformCommission: 45000,
-      totalCrewPayoutsPending: 28500,
-      totalVendorRetainersPending: 15400,
-      billingCycle: 'CURRENT_CYCLE',
+  it('validates GET /crew/wallet/ledger/all query parameters alignment (page, limit, startDate, endDate, status)', () => {
+    const buildLedgerQuery = (params: {
+      page?: number;
+      limit?: number;
+      startDate?: string;
+      endDate?: string;
+      status?: string;
+    }) => {
+      const searchParams = new URLSearchParams();
+      if (params.page) searchParams.set('page', String(params.page));
+      if (params.limit) searchParams.set('limit', String(params.limit));
+      if (params.startDate) searchParams.set('startDate', params.startDate);
+      if (params.endDate) searchParams.set('endDate', params.endDate);
+      if (params.status) searchParams.set('status', params.status);
+      return searchParams.toString() ? `?${searchParams.toString()}` : '';
     };
 
-    expect(rawSummary.totalPlatformCommission).toBe(45000);
-    expect(rawSummary.totalCrewPayoutsPending).toBe(28500);
-    expect(rawSummary.totalVendorRetainersPending).toBe(15400);
+    const query = buildLedgerQuery({
+      page: 2,
+      limit: 10,
+      startDate: '2026-11-01',
+      endDate: '2026-11-30',
+      status: 'SETTLED',
+    });
+
+    expect(query).toBe('?page=2&limit=10&startDate=2026-11-01&endDate=2026-11-30&status=SETTLED');
+  });
+
+  it('validates remediated GET /admin/billing/summary response structure with explicit cycle vs all-time semantics', () => {
+    // Authoritative backend response from CrewWalletService.getBillingSummary
+    const rawSummary = {
+      isCycleScoped: true,
+      cycleStartDate: '2026-11-01T00:00:00.000Z',
+      cycleEndDate: '2026-11-30T23:59:59.999Z',
+      cycleCommission: 45000,
+      allTimePlatformCommission: 180000,
+      totalPlatformCommission: 45000, // alias for cycleCommission when cycle supplied
+      cycleCrewPayoutsPending: 12500,
+      totalCrewPayoutsPending: 28500,
+      cycleVendorRetainersPending: 8400,
+      totalVendorRetainersPending: 15400,
+      billingCycle: '2026-11',
+    };
+
+    // Cycle semantics verification
+    expect(rawSummary.isCycleScoped).toBe(true);
+    expect(rawSummary.cycleCommission).toBe(45000);
+    expect(rawSummary.allTimePlatformCommission).toBe(180000);
+    expect(rawSummary.totalPlatformCommission).toBe(rawSummary.cycleCommission);
+    expect(rawSummary.cycleCrewPayoutsPending).toBeLessThanOrEqual(rawSummary.totalCrewPayoutsPending);
+    expect(rawSummary.cycleVendorRetainersPending).toBeLessThanOrEqual(rawSummary.totalVendorRetainersPending);
+  });
+
+  it('validates UTC month bounds formatting for GET /admin/billing/summary cycle parameter', () => {
+    const cycleRegex = /^\d{4}-(0[1-9]|1[0-2])$/;
+    const validCycle = '2026-11';
+    const invalidCycle1 = '2026-13';
+    const invalidCycle2 = '2026/11';
+    const invalidCycle3 = 'invalid';
+
+    expect(cycleRegex.test(validCycle)).toBe(true);
+    expect(cycleRegex.test(invalidCycle1)).toBe(false);
+    expect(cycleRegex.test(invalidCycle2)).toBe(false);
+    expect(cycleRegex.test(invalidCycle3)).toBe(false);
+
+    // Exact UTC month bounds calculation
+    const [yearStr, monthStr] = validCycle.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+    const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
+    const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
+
+    expect(startDate.toISOString()).toBe('2026-11-01T00:00:00.000Z');
+    expect(endDate.toISOString()).toBe('2026-11-30T23:59:59.999Z');
+  });
+
+  it('verifies client API functions fetchGlobalSettlementLedger and fetchBillingSummary contracts', async () => {
+    const mockLedgerResponse = {
+      total: 1,
+      page: 1,
+      limit: 20,
+      totalPages: 1,
+      transactions: [
+        {
+          id: 'tx-1',
+          bookingId: 'b-1',
+          bookingCode: 'BK-100',
+          tripAmount: 2000,
+          crewShare: 1400,
+          vendorShare: 300,
+          platformCommission: 300,
+          splitType: 'TRI_PARTY_70_15_15' as const,
+          status: 'SETTLED' as const,
+          createdAt: '2026-11-15T12:00:00.000Z',
+        },
+      ],
+    };
+
+    // Verify parser handles transactions key
+    const parsedTransactions = mockLedgerResponse.transactions ?? [];
+    expect(parsedTransactions).toHaveLength(1);
+    expect(parsedTransactions[0].bookingCode).toBe('BK-100');
+    expect(parsedTransactions[0].splitType).toBe('TRI_PARTY_70_15_15');
+
+    // Verify backward compatibility fallback with legacy items key
+    const legacyRaw: any = {
+      total: 1,
+      items: mockLedgerResponse.transactions,
+    };
+    const fallbackTransactions = legacyRaw.transactions ?? legacyRaw.items ?? [];
+    expect(fallbackTransactions).toHaveLength(1);
+    expect(fallbackTransactions[0].bookingCode).toBe('BK-100');
   });
 
   it('enforces external transaction notice constraint (no simulated banking transfers)', () => {

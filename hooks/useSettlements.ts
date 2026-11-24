@@ -14,6 +14,8 @@ import {
 import {
   BillingSummary,
   LedgerTransaction,
+  GlobalLedgerQueryFilters,
+  GlobalLedgerResponse,
   PendingCrewPayoutsResponse,
   PendingVendorPayoutsResponse,
   CrewPayoutHistoryResponse,
@@ -28,7 +30,8 @@ export const settlementKeys = {
   all: ['settlements'] as const,
   billingSummary: (cycle?: string) =>
     [...settlementKeys.all, 'billing-summary', cycle] as const,
-  globalLedger: () => [...settlementKeys.all, 'global-ledger'] as const,
+  globalLedger: (filters?: GlobalLedgerQueryFilters) =>
+    [...settlementKeys.all, 'global-ledger', filters] as const,
   pendingCrewPayouts: () => [...settlementKeys.all, 'pending-crew-payouts'] as const,
   pendingVendorPayouts: () => [...settlementKeys.all, 'pending-vendor-payouts'] as const,
   crewPayoutHistory: (crewProfileId: string) =>
@@ -54,10 +57,13 @@ export function useBillingSummaryQuery(cycle?: string, enabled: boolean = true) 
  * Hook: Query Global Settled Bookings Ledger
  * Backend: GET /crew/wallet/ledger/all
  */
-export function useGlobalSettlementLedgerQuery(enabled: boolean = true) {
-  return useQuery<LedgerTransaction[], Error>({
-    queryKey: settlementKeys.globalLedger(),
-    queryFn: () => fetchGlobalSettlementLedger(),
+export function useGlobalSettlementLedgerQuery(
+  filters?: GlobalLedgerQueryFilters,
+  enabled: boolean = true,
+) {
+  return useQuery<GlobalLedgerResponse, Error>({
+    queryKey: settlementKeys.globalLedger(filters),
+    queryFn: () => fetchGlobalSettlementLedger(filters),
     enabled,
     retry: 1,
     staleTime: 30 * 1000,
