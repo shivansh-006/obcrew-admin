@@ -4,7 +4,7 @@ export interface AdminUser {
   id: string;
   name: string;
   email: string;
-  role: 'SUPERADMIN' | 'ADMIN' | 'OPS_MANAGER' | 'VENDOR';
+  role: 'ADMIN_OBCREW' | 'SUPER_ADMIN_OBCREW' | 'ADMIN_OBPARK' | 'SUPER_ADMIN_OBPARK';
   vendorId?: string;
 }
 
