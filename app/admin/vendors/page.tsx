@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { motion, useReducedMotion } from 'framer-motion';
 import Link from 'next/link';
@@ -10,29 +11,38 @@ import {
   Clock3,
   Mail,
   Phone,
+  Search,
+  RefreshCw,
   Users,
 } from 'lucide-react';
 import { microgrammaBold } from '@/lib/fonts';
-import { useAuthStore } from '@/store/auth.store';
+import { apiClient } from '@/lib/api/client';
 
-type VendorStatus = 'APPROVED' | 'PENDING_APPROVAL' | 'REJECTED' | 'SUSPENDED';
+export type VendorStatus =
+  | 'PENDING_VERIFICATION'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'SUSPENDED';
 
-interface VendorAgency {
+export interface VendorAgency {
   id: string;
   agencyName: string;
   contactPerson: string;
   email: string;
   phone: string;
   gstin: string;
+  panNumber: string;
   driversCount: number;
   commissionTier: string;
   status: VendorStatus;
-  gstStatus: string;
+  rejectionReason?: string | null;
+  documentsCount: number;
+  createdAt: string;
 }
 
 const STATUS_LABELS: Record<VendorStatus, string> = {
+  PENDING_VERIFICATION: 'Pending verification',
   APPROVED: 'Approved',
-  PENDING_APPROVAL: 'Pending approval',
   REJECTED: 'Rejected',
   SUSPENDED: 'Suspended',
 };
@@ -43,203 +53,229 @@ function readText(value: unknown, fallback = '—'): string {
   return fallback;
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
-}
-
-async function requestVendorApi(path: string, init: RequestInit = {}): Promise<unknown> {
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
-  const token = useAuthStore.getState().token ||
-    (typeof window !== 'undefined' ? localStorage.getItem('obcrew_token') : null);
-  const headers = new Headers(init.headers);
-  headers.set('Accept', 'application/json');
-  if (token) headers.set('Authorization', `Bearer ${token}`);
-
-  const response = await fetch(`${backendUrl}${path}`, { ...init, headers });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    const message = asRecord(payload).message;
-    throw new Error(typeof message === 'string' ? message : `Vendor request failed (${response.status}).`);
-  }
-  return payload;
-}
-
-function getVendorAgencies(): Promise<unknown> {
-  return requestVendorApi('/admin/vendors/pending');
-}
-
 function normalizeStatus(value: unknown): VendorStatus {
   const status = String(value || '').toUpperCase().replace(/[\s-]+/g, '_');
-  if (status === 'VERIFIED' || status === 'APPROVED' || status === 'ACTIVE') return 'APPROVED';
+  if (status === 'APPROVED' || status === 'VERIFIED' || status === 'ACTIVE') return 'APPROVED';
   if (status === 'REJECTED' || status === 'DECLINED') return 'REJECTED';
   if (status === 'SUSPENDED') return 'SUSPENDED';
-  return 'PENDING_APPROVAL';
+  return 'PENDING_VERIFICATION';
 }
 
 function normalizeVendor(raw: Record<string, unknown>, index: number): VendorAgency {
-  const nestedUser = (raw.owner || raw.contact || raw.admin || {}) as Record<string, unknown>;
-  const nestedAgency = (raw.agency || raw.vendor || {}) as Record<string, unknown>;
-  const statusSource = raw.status ?? raw.approvalStatus ?? raw.kycStatus;
-  const fleetCount =
-    raw.driversCount ?? raw.driverCount ?? raw.fleetCount ?? raw.mechanicsCount ??
-    nestedAgency.driversCount ?? nestedAgency.driverCount ?? nestedAgency.fleetCount;
+  const user = (raw.user || {}) as Record<string, unknown>;
+  const docs = Array.isArray(raw.documents) ? raw.documents : [];
+  const members = Array.isArray(raw.members) ? raw.members : [];
+
+  const countObj =
+    raw._count && typeof raw._count === 'object'
+      ? (raw._count as Record<string, unknown>).members
+      : undefined;
+
+  const rawCount =
+    raw.driversCount ??
+    raw.driverCount ??
+    raw.fleetCount ??
+    countObj;
+
+  const count = typeof rawCount === 'number' ? rawCount : members.length;
 
   return {
-    id: readText(raw.id ?? raw._id ?? raw.vendorId, `vendor-${index + 1}`),
-    agencyName: readText(
-      raw.agencyName ?? raw.name ?? raw.companyName ?? nestedAgency.agencyName ?? nestedAgency.name,
-      'Unnamed agency'
-    ),
-    contactPerson: readText(
-      raw.contactPerson ?? raw.ownerName ?? nestedUser.name ?? nestedUser.fullName,
-    ),
-    email: readText(
-      raw.email ?? raw.contactEmail ?? nestedUser.email,
-    ),
-    phone: readText(
-      raw.phone ?? raw.phoneNumber ?? raw.mobile ?? nestedUser.phone ?? nestedUser.phoneNumber,
-    ),
-    gstin: readText(raw.gstin ?? raw.gstNumber ?? raw.gstIn ?? nestedAgency.gstin),
-    driversCount: typeof fleetCount === 'number' ? fleetCount : Number(fleetCount) || 0,
-    commissionTier: readText(
-      raw.commissionTier ?? raw.commission ?? raw.commissionSplit,
-      '70/15/15 Tri-Party'
-    ),
-    status: normalizeStatus(statusSource),
-    gstStatus: readText(
-      raw.gstStatus ?? raw.gstVerificationStatus ?? raw.gstinStatus,
-      'Pending'
-    ).replace(/_/g, ' '),
+    id: readText(raw.id ?? raw.vendorId, `vendor-${index + 1}`),
+    agencyName: readText(raw.companyName ?? raw.agencyName ?? raw.name, 'Unnamed Agency'),
+    contactPerson: readText(raw.contactPerson ?? raw.ownerName),
+    email: readText(raw.email ?? user.email),
+    phone: readText(raw.phone ?? user.phoneNumber),
+    gstin: readText(raw.gstin),
+    panNumber: readText(raw.panNumber),
+    driversCount: count,
+    commissionTier: raw.commissionRate
+      ? `${Number(raw.commissionRate) * 100}% Agency Cut`
+      : '15% Agency Split (70/15/15)',
+    status: normalizeStatus(raw.status),
+    rejectionReason: (raw.rejectionReason as string) || null,
+    documentsCount: docs.length,
+    createdAt: readText(raw.createdAt, new Date().toISOString()),
   };
 }
 
 export default function VendorsPage() {
   const shouldReduceMotion = useReducedMotion();
-  const vendorsQuery = useQuery({
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('ALL');
+
+  const {
+    data: rawVendors,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    isFetching,
+  } = useQuery({
     queryKey: ['vendor-agencies'],
     queryFn: async () => {
-      const payload = await getVendorAgencies();
-      const response = asRecord(payload);
-      const data = asRecord(response.data);
-      const list = Array.isArray(payload)
-        ? payload
-        : data.vendors ?? data.agencies ?? response.vendors ?? response.agencies ?? response.data ?? [];
-      if (!Array.isArray(list)) throw new Error('The vendor API returned an unexpected response format.');
-      return list.map((item, index) =>
-        normalizeVendor((item && typeof item === 'object' ? item : {}) as Record<string, unknown>, index)
-      );
+      const response = await apiClient<unknown[]>('/admin/vendors/pending');
+      return Array.isArray(response) ? response : [];
     },
-    refetchOnWindowFocus: false,
-    refetchOnReconnect: false,
-    retry: false,
+    staleTime: 30 * 1000,
   });
-  const vendors = vendorsQuery.data ?? [];
-  const isLoading = vendorsQuery.isLoading;
-  const error = vendorsQuery.error instanceof Error ? vendorsQuery.error.message : '';
 
-  const kpis = [
-    {
-      label: 'Total Agencies',
-      value: vendors.length,
-      icon: Building2,
-      color: 'text-indigo-600',
-      bg: 'bg-indigo-50',
-    },
-    {
-      label: 'Approved',
-      value: vendors.filter((vendor) => vendor.status === 'APPROVED').length,
-      icon: CheckCircle2,
-      color: 'text-emerald-600',
-      bg: 'bg-emerald-50',
-    },
-    {
-      label: 'Pending Approval',
-      value: vendors.filter((vendor) => vendor.status === 'PENDING_APPROVAL').length,
-      icon: Clock3,
-      color: 'text-amber-600',
-      bg: 'bg-amber-50',
-    },
-    {
-      label: 'Fleet Workforce',
-      value: vendors.reduce((total, vendor) => total + vendor.driversCount, 0),
-      icon: Users,
-      color: 'text-cyan-600',
-      bg: 'bg-cyan-50',
-    },
-  ];
+  const vendors: VendorAgency[] = useMemo(() => {
+    if (!Array.isArray(rawVendors)) return [];
+    return rawVendors.map((item, index) =>
+      normalizeVendor(item && typeof item === 'object' ? (item as Record<string, unknown>) : {}, index)
+    );
+  }, [rawVendors]);
+
+  const filteredVendors = useMemo(() => {
+    return vendors.filter((v) => {
+      const matchesSearch =
+        v.agencyName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        v.contactPerson.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        v.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        v.gstin.toLowerCase().includes(searchTerm.toLowerCase());
+
+      const matchesStatus =
+        statusFilter === 'ALL' || v.status === statusFilter;
+
+      return matchesSearch && matchesStatus;
+    });
+  }, [vendors, searchTerm, statusFilter]);
+
+  const pendingCount = vendors.filter((v) => v.status === 'PENDING_VERIFICATION').length;
+  const approvedCount = vendors.filter((v) => v.status === 'APPROVED').length;
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className={`${microgrammaBold.className} text-xl font-bold text-slate-900 tracking-wide`}>
-            Vendor Agency Directory
+            Vendor Fleet Agencies
           </h1>
           <p className="text-xs text-slate-500 mt-1">
-            Registered fleet agencies, approval status, and partner details.
+            Review corporate fleet agency KYC registrations, verify documents, and inspect fleet rosters.
           </p>
         </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => refetch()}
+            disabled={isLoading || isFetching}
+            className="px-3 py-2 rounded-lg bg-white border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isFetching ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {kpis.map((kpi) => {
-          const Icon = kpi.icon;
-          return (
-            <div key={kpi.label} className="p-5 rounded-xl bg-white border border-slate-200/80 shadow-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-slate-500">{kpi.label}</span>
-                <div className={`h-8 w-8 rounded-lg ${kpi.bg} ${kpi.color} flex items-center justify-center`}>
-                  <Icon className="h-4 w-4" />
-                </div>
-              </div>
-              <span className={`${microgrammaBold.className} block mt-3 text-2xl font-bold text-slate-900`}>
-                {isLoading ? '—' : kpi.value}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-
-      {vendorsQuery.isError && (
-        <div className="flex items-start justify-between gap-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-red-600" />
-            <p className="text-xs font-medium text-red-700">
-              {error || 'Unable to load vendor agencies.'}
+      {/* Metric Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <div className="p-4 rounded-xl bg-white border border-slate-200/80 shadow-sm flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-bold uppercase text-slate-400">Total Agencies</span>
+            <p className={`${microgrammaBold.className} text-2xl font-bold text-slate-900 mt-0.5`}>
+              {vendors.length}
             </p>
           </div>
+          <div className="h-10 w-10 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center">
+            <Building2 className="h-5 w-5" />
+          </div>
         </div>
-      )}
 
-      <div className="rounded-xl bg-white border border-slate-200/80 shadow-sm overflow-hidden">
+        <div className="p-4 rounded-xl bg-white border border-slate-200/80 shadow-sm flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-bold uppercase text-amber-600">Pending Review</span>
+            <p className={`${microgrammaBold.className} text-2xl font-bold text-amber-700 mt-0.5`}>
+              {pendingCount}
+            </p>
+          </div>
+          <div className="h-10 w-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center">
+            <Clock3 className="h-5 w-5" />
+          </div>
+        </div>
+
+        <div className="p-4 rounded-xl bg-white border border-slate-200/80 shadow-sm flex items-center justify-between">
+          <div>
+            <span className="text-[11px] font-bold uppercase text-emerald-600">Active Approved</span>
+            <p className={`${microgrammaBold.className} text-2xl font-bold text-emerald-700 mt-0.5`}>
+              {approvedCount}
+            </p>
+          </div>
+          <div className="h-10 w-10 rounded-xl bg-emerald-50 text-emerald-600 flex items-center justify-center">
+            <CheckCircle2 className="h-5 w-5" />
+          </div>
+        </div>
+      </div>
+
+      {/* Filter and Search Bar */}
+      <div className="p-4 bg-white rounded-xl border border-slate-200/80 shadow-sm flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="relative w-full sm:w-80">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+          <input
+            type="text"
+            placeholder="Search agency, contact, GSTIN..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg outline-none focus:bg-white focus:border-[#074139] focus:ring-2 focus:ring-[#074139]/10 transition-all"
+          />
+        </div>
+
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          <label className="text-xs text-slate-500 whitespace-nowrap">Filter Status:</label>
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="text-xs font-semibold bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-[#074139]"
+          >
+            <option value="ALL">All Statuses</option>
+            <option value="PENDING_VERIFICATION">Pending Verification</option>
+            <option value="APPROVED">Approved</option>
+            <option value="REJECTED">Rejected</option>
+            <option value="SUSPENDED">Suspended</option>
+          </select>
+        </div>
+      </div>
+
+      {/* Content Area */}
+      <div className="rounded-xl border border-slate-200/80 bg-white shadow-sm overflow-hidden">
         {isLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-            {[0, 1, 2, 3].map((item) => (
-              <div key={item} className="h-56 rounded-xl border border-slate-100 bg-slate-50 animate-pulse" />
-            ))}
+          <div className="py-16 flex flex-col items-center justify-center text-center">
+            <div className="h-8 w-8 border-2 border-[#074139] border-t-transparent rounded-full animate-spin" />
+            <p className="mt-3 text-xs text-slate-500 font-medium">Loading vendor agencies from backend…</p>
           </div>
-        ) : vendorsQuery.isError ? (
-          <div className="py-16 px-6 text-center">
-            <p className="text-sm font-bold text-slate-800">Vendor agencies could not be loaded</p>
-            <p className="mt-1 text-xs text-slate-400">{error}</p>
+        ) : isError ? (
+          <div className="py-16 flex flex-col items-center justify-center text-center px-6">
+            <div className="h-10 w-10 rounded-xl bg-red-50 text-red-600 flex items-center justify-center">
+              <AlertTriangle className="h-5 w-5" />
+            </div>
+            <p className="mt-3 text-sm font-bold text-slate-800">Unable to load vendor agencies</p>
+            <p className="mt-1 text-xs text-slate-500 max-w-md">
+              {error instanceof Error ? error.message : 'Please check your network and admin permissions.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => refetch()}
+              className="mt-4 px-3.5 py-1.5 rounded-lg bg-[#074139] text-white text-xs font-bold hover:bg-[#0a5e52] transition-colors"
+            >
+              Retry
+            </button>
           </div>
-        ) : vendors.length === 0 ? (
+        ) : filteredVendors.length === 0 ? (
           <div className="py-16 flex flex-col items-center text-center px-6">
             <div className="h-10 w-10 rounded-xl bg-slate-100 text-slate-400 flex items-center justify-center">
               <Building2 className="h-5 w-5" />
             </div>
-            <p className="mt-3 text-sm font-bold text-slate-800">
-              No vendor agencies found
-            </p>
+            <p className="mt-3 text-sm font-bold text-slate-800">No vendor agencies found</p>
             <p className="mt-1 text-xs text-slate-400">
-              Agencies will appear here when the backend returns them.
+              {searchTerm || statusFilter !== 'ALL'
+                ? 'No agencies match your current search and filter criteria.'
+                : 'Pending vendor registrations will appear here when submitted.'}
             </p>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4">
-            {vendors.map((vendor, index) => (
+            {filteredVendors.map((vendor, index) => (
               <motion.article
                 key={vendor.id}
                 initial={shouldReduceMotion ? false : { opacity: 0, y: 8 }}
@@ -249,7 +285,7 @@ export default function VendorsPage() {
                   duration: 0.2,
                   delay: shouldReduceMotion ? 0 : Math.min(index * 0.04, 0.2),
                 }}
-                className="p-5 rounded-xl bg-white border border-slate-200/80 shadow-sm space-y-4"
+                className="p-5 rounded-xl bg-white border border-slate-200/80 shadow-sm space-y-4 hover:border-slate-300 transition-all"
               >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -265,24 +301,24 @@ export default function VendorsPage() {
                       vendor.status === 'APPROVED'
                         ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                         : vendor.status === 'REJECTED' || vendor.status === 'SUSPENDED'
-                          ? 'bg-red-50 text-red-700 border border-red-200'
-                          : 'bg-amber-50 text-amber-700 border border-amber-200'
+                        ? 'bg-red-50 text-red-700 border border-red-200'
+                        : 'bg-amber-50 text-amber-700 border border-amber-200'
                     }`}
                   >
-                    {STATUS_LABELS[vendor.status]}
+                    {STATUS_LABELS[vendor.status] || vendor.status}
                   </span>
                 </div>
 
-                <div className="space-y-2 text-xs">
+                <div className="space-y-1.5 text-xs">
                   {vendor.email !== '—' && (
                     <div className="flex items-center gap-2 text-slate-600">
-                      <Mail className="h-3.5 w-3.5 text-slate-400" />
+                      <Mail className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                       <span className="truncate">{vendor.email}</span>
                     </div>
                   )}
                   {vendor.phone !== '—' && (
                     <div className="flex items-center gap-2 text-slate-600">
-                      <Phone className="h-3.5 w-3.5 text-slate-400" />
+                      <Phone className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                       <span>{vendor.phone}</span>
                     </div>
                   )}
@@ -290,31 +326,33 @@ export default function VendorsPage() {
 
                 <div className="grid grid-cols-2 gap-3 p-3 bg-slate-50 rounded-lg">
                   <div>
-                    <span className="text-slate-400 block text-[10px] uppercase font-semibold">GSTIN</span>
-                    <span className="font-mono text-xs text-slate-700">{vendor.gstin}</span>
-                    <span className={`mt-1 block text-[10px] font-bold ${
-                      vendor.gstStatus.toUpperCase() === 'VERIFIED'
-                        ? 'text-emerald-600'
-                        : vendor.gstStatus.toUpperCase() === 'REJECTED'
-                          ? 'text-red-600'
-                          : 'text-amber-600'
-                    }`}>
-                      GST: {vendor.gstStatus}
-                    </span>
+                    <span className="text-slate-400 block text-[10px] uppercase font-semibold">GSTIN / Tax ID</span>
+                    <span className="font-mono text-xs text-slate-800 font-medium">{vendor.gstin}</span>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">PAN: {vendor.panNumber}</span>
                   </div>
                   <div>
                     <span className="text-slate-400 block text-[10px] uppercase font-semibold">Fleet Workforce</span>
-                    <span className="font-bold text-xs text-slate-800">{vendor.driversCount} Drivers / Mechanics</span>
+                    <div className="flex items-center gap-1.5 mt-0.5">
+                      <Users className="h-3.5 w-3.5 text-slate-500" />
+                      <span className="font-bold text-xs text-slate-800">
+                        {vendor.driversCount} Drivers / Mechanics
+                      </span>
+                    </div>
+                    <span className="text-[10px] text-slate-400 block mt-0.5">
+                      {vendor.documentsCount} KYC doc(s)
+                    </span>
                   </div>
                 </div>
 
                 <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-100">
-                  <span className="text-[11px] text-slate-400">Commission: {vendor.commissionTier}</span>
+                  <span className="text-[11px] text-slate-500 font-medium">
+                    {vendor.commissionTier}
+                  </span>
                   <Link
                     href={`/admin/vendors/${encodeURIComponent(vendor.id)}`}
-                    className="text-[11px] font-bold text-[#074139] hover:underline"
+                    className="text-xs font-bold text-[#074139] hover:underline inline-flex items-center gap-1"
                   >
-                    View agency →
+                    View agency profile →
                   </Link>
                 </div>
               </motion.article>

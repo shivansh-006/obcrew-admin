@@ -4,33 +4,17 @@ import type { FormEvent } from 'react';
 import { useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import { useMutation } from '@tanstack/react-query';
-import { AlertTriangle, LoaderCircle, X } from 'lucide-react';
-import { useAuthStore } from '@/store/auth.store';
+import { AlertTriangle, LoaderCircle, ShieldAlert, X } from 'lucide-react';
+import { apiClient, ApiClientError } from '@/lib/api/client';
 
-async function inviteAgencyDriver(vendorId: string, phoneNumber: string): Promise<void> {
-  const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL; 
-  const token = useAuthStore.getState().token ||
-    (typeof window !== 'undefined' ? localStorage.getItem('obcrew_token') : null);
-  const response = await fetch(`${backendUrl}/vendor/fleet/members`, {
+async function inviteAgencyDriver(phoneNumber: string): Promise<void> {
+  // Backend contract: POST /vendor/fleet/members
+  // Body: { phoneNumber: string } (E.164 format with country code)
+  // Guard: RolesGuard @Roles('VENDOR')
+  await apiClient('/vendor/fleet/members', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({ vendorId, phoneNumber }),
+    body: JSON.stringify({ phoneNumber }),
   });
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    if (response.status === 403) {
-      throw new Error('Freelancer Protection prevented this link: drivers registered as direct freelancers cannot be added to an agency.');
-    }
-    const message = payload && typeof payload === 'object' && 'message' in payload &&
-      typeof payload.message === 'string'
-      ? payload.message
-      : `Unable to send the driver invitation (${response.status}).`;
-    throw new Error(message);
-  }
 }
 
 interface InviteDriverModalProps {
@@ -41,31 +25,55 @@ interface InviteDriverModalProps {
 }
 
 export function InviteDriverModal({
-  vendorId,
   agencyName,
   onClose,
   onInvited,
 }: InviteDriverModalProps) {
-  const [phoneNumber, setPhoneNumber] = useState('');
+  const [phoneNumber, setPhoneNumber] = useState('+91');
   const inviteMutation = useMutation({
-    mutationFn: (number: string) => inviteAgencyDriver(vendorId, number),
+    mutationFn: (number: string) => inviteAgencyDriver(number),
   });
-  const isPhoneValid = /^\+?[0-9][0-9\s()-]{6,19}$/.test(phoneNumber.trim());
+
+  // Backend DTO validation: Matches /^\+[1-9]\d{9,14}$/
+  const PHONE_REGEX = /^\+[1-9]\d{9,14}$/;
+  const cleanPhone = phoneNumber.trim().replace(/[\s()-]/g, '');
+  const isPhoneValid = PHONE_REGEX.test(cleanPhone);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (inviteMutation.isPending || !isPhoneValid) return;
     try {
-      const normalizedPhone = phoneNumber.trim().replace(/[\s()-]/g, '');
-      await inviteMutation.mutateAsync(normalizedPhone);
+      await inviteMutation.mutateAsync(cleanPhone);
       onInvited();
       onClose();
     } catch {
-      // Mutation error is rendered below; keep the dialog open for correction/retry.
+      // Handled by mutation error display below
     }
   };
+
   const isSubmitting = inviteMutation.isPending;
-  const error = inviteMutation.error instanceof Error ? inviteMutation.error.message : '';
+  const rawError = inviteMutation.error;
+
+  let errorMessage = '';
+  let isPermissionError = false;
+
+  if (rawError instanceof ApiClientError) {
+    if (rawError.status === 403) {
+      isPermissionError = true;
+      errorMessage =
+        'Authorization Restriction (403): Driver fleet linking is strictly restricted to agency VENDOR sessions. Direct administrator fleet linking is prohibited under Freelance Partner Protection policy.';
+    } else if (rawError.status === 404) {
+      errorMessage =
+        'No verified driver or mechanic was found with this phone number. The partner must first complete individual KYC.';
+    } else if (rawError.status === 409) {
+      errorMessage =
+        'This partner is already affiliated with an agency or has an active invite pending.';
+    } else {
+      errorMessage = rawError.message;
+    }
+  } else if (rawError instanceof Error) {
+    errorMessage = rawError.message;
+  }
 
   return (
     <Dialog.Root
@@ -75,15 +83,15 @@ export function InviteDriverModal({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-900/40 data-[state=open]:animate-in data-[state=closed]:animate-out" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-xl border border-slate-200 bg-white p-5 shadow-xl focus:outline-none">
-          <div className="flex items-start justify-between gap-4">
+        <Dialog.Overlay className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm data-[state=open]:animate-in data-[state=closed]:animate-out" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl focus:outline-none">
+          <div className="flex items-start justify-between gap-4 border-b border-slate-100 pb-4">
             <div>
               <Dialog.Title className="text-sm font-bold text-slate-900">
-                Invite driver to agency fleet
+                Link Driver to Agency Fleet
               </Dialog.Title>
-              <Dialog.Description className="mt-1 text-xs text-slate-500">
-                {agencyName}
+              <Dialog.Description className="mt-0.5 text-xs text-slate-500">
+                Target Agency: <span className="font-semibold text-slate-800">{agencyName}</span>
               </Dialog.Description>
             </div>
             <Dialog.Close asChild>
@@ -91,44 +99,55 @@ export function InviteDriverModal({
                 type="button"
                 disabled={isSubmitting}
                 aria-label="Close invite dialog"
-                className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50"
+                className="rounded-md p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 disabled:opacity-50 transition-colors"
               >
                 <X className="h-4 w-4" />
               </button>
             </Dialog.Close>
           </div>
 
-          <form onSubmit={handleSubmit} className="mt-5 space-y-4">
+          <form onSubmit={handleSubmit} className="mt-4 space-y-4">
             <div>
               <label htmlFor="driver-phone" className="mb-1.5 block text-xs font-semibold text-slate-700">
-                Driver phone number
+                Driver / Mechanic Mobile Number <span className="text-red-500">*</span>
               </label>
               <input
                 id="driver-phone"
                 type="tel"
                 autoComplete="tel"
                 required
-                pattern="\+?[0-9][0-9\s()-]{6,19}"
                 value={phoneNumber}
                 onChange={(event) => {
                   setPhoneNumber(event.target.value);
-                  inviteMutation.reset();
+                  if (inviteMutation.isError) inviteMutation.reset();
                 }}
-                placeholder="+91 98111 22334"
-                aria-invalid={phoneNumber.length > 0 && !isPhoneValid}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm outline-none transition-colors focus:border-[#074139] focus:ring-2 focus:ring-[#074139]/15"
+                placeholder="+919876543210"
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-xs font-mono outline-none transition-colors focus:border-[#074139] focus:ring-2 focus:ring-[#074139]/15"
               />
-              <p className={`mt-1.5 text-[11px] ${phoneNumber.length > 0 && !isPhoneValid ? 'text-red-600' : 'text-slate-400'}`}>
-                {phoneNumber.length > 0 && !isPhoneValid
-                  ? 'Enter a valid phone number, including country code if needed.'
-                  : 'An invitation will be sent by SMS or notification.'}
+              <p className={`mt-1.5 text-[11px] ${cleanPhone.length > 3 && !isPhoneValid ? 'text-red-600' : 'text-slate-400'}`}>
+                {cleanPhone.length > 3 && !isPhoneValid
+                  ? 'Must include country code, e.g. +919876543210 (10–15 digits).'
+                  : 'Backend contract requires international E.164 format.'}
               </p>
             </div>
 
-            {error && (
-              <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-red-600" />
-                <p className="text-xs text-red-700">{error}</p>
+            {errorMessage && (
+              <div
+                className={`flex items-start gap-2.5 rounded-xl border p-3 text-xs ${
+                  isPermissionError
+                    ? 'border-amber-200 bg-amber-50 text-amber-900'
+                    : 'border-red-200 bg-red-50 text-red-700'
+                }`}
+              >
+                {isPermissionError ? (
+                  <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+                ) : (
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600" />
+                )}
+                <div className="space-y-0.5">
+                  <p className="font-bold">{isPermissionError ? 'Backend Role Guard' : 'Invitation Rejected'}</p>
+                  <p className="text-[11px] leading-relaxed">{errorMessage}</p>
+                </div>
               </div>
             )}
 
@@ -145,10 +164,10 @@ export function InviteDriverModal({
               <button
                 type="submit"
                 disabled={isSubmitting || !isPhoneValid}
-                className="flex items-center gap-1.5 rounded-lg bg-[#074139] px-3.5 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#0a5e52] disabled:opacity-50"
+                className="flex items-center gap-1.5 rounded-lg bg-[#074139] px-4 py-2 text-xs font-bold text-white shadow-sm transition-colors hover:bg-[#0a5e52] disabled:opacity-50"
               >
                 {isSubmitting && <LoaderCircle className="h-3.5 w-3.5 animate-spin" />}
-                Send invite
+                Send Link Request
               </button>
             </div>
           </form>

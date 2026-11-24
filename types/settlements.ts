@@ -1,68 +1,22 @@
 /**
- * Developer 4: Financial Settlements & Ledgers Types
- * 
- * References:
- * - Specification: OBCREW Admin Panel.pdf (Page 5 & 6)
- * - Backend: obpark-backend/src/modules/crew/wallet & obpark-backend/src/modules/vendor/wallet
+ * Financial Settlements & Ledgers Types
+ * Aligned with obpark-backend/src/modules/crew/wallet & obpark-backend/src/modules/vendor/wallet
  */
 
-/**
- * Commission split models in OBCrew operations:
- * - DIRECT_85_15: 85% Driver/Mechanic, 15% Platform Fee (Direct Freelance)
- * - TRI_PARTY_70_15_15: 70% Driver, 15% Vendor Fleet Agency, 15% Platform Fee (Agency-Affiliated)
- */
-export type CommissionSplitType =
-  | 'DIRECT_85_15'
-  | 'TRI_PARTY_70_15_15';
-
-/**
- * Status of a revenue split ledger transaction
- */
+export type CommissionSplitType = 'DIRECT_85_15' | 'TRI_PARTY_70_15_15';
 export type LedgerStatus = 'SETTLED' | 'PENDING' | 'FAILED';
 
-/**
- * System Wallet Totals & Payout Summary
- * PDF Spec: GET /admin/billing/summary
- * 
- * Response shape:
- * {
- *   "totalPlatformCommission": 84250,
- *   "totalCrewPayoutsPending": 392400,
- *   "totalVendorRetainersPending": 62100,
- *   "billingCycle": "2026-11"
- * }
- */
 export interface BillingSummary {
   totalPlatformCommission: number;
   totalCrewPayoutsPending: number;
   totalVendorRetainersPending: number;
-  billingCycle: string; // e.g. "2026-11"
+  billingCycle: string;
 }
 
-/**
- * Filter parameters for GET /admin/billing/summary
- */
 export interface BillingSummaryFilters {
-  cycle?: string; // Format: "YYYY-MM"
+  cycle?: string;
 }
 
-/**
- * Settled Booking Ledger Transaction
- * PDF Spec: GET /crew/wallet/ledger/all
- * 
- * Response shape:
- * {
- *   "id": "TXN-8801",
- *   "bookingId": "BK-1092",
- *   "tripAmount": 1200,
- *   "crewShare": 840,
- *   "vendorShare": 180,
- *   "platformCommission": 180,
- *   "splitType": "TRI_PARTY_70_15_15",
- *   "status": "SETTLED",
- *   "createdAt": "2026-11-19T10:14:00.000Z"
- * }
- */
 export interface LedgerTransaction {
   id: string;
   bookingId: string;
@@ -73,53 +27,30 @@ export interface LedgerTransaction {
   platformCommission: number;
   splitType: CommissionSplitType;
   status: LedgerStatus;
-  payoutStatus?: string;
-  paymentStatus?: string | null;
-  crewProfileId?: string;
-  vendorProfileId?: string | null;
   createdAt: string;
-  payeeName?: string;
-  serviceType?: string;
 }
 
-/**
- * Actual backend model: Pending Crew Payout item from obpark-backend
- * Endpoint: GET /admin/crew/payouts/pending
- */
-export interface BackendPendingCrewPayout {
+export interface PendingCrewPayout {
   crewProfileId: string;
-  fullName: string;
-  bankAccountNumber: string | null;
+  fullName: string | null;
+  email: string | null;
+  phoneNumber: string | null;
   pendingAmount: number;
-  pendingJobsCount: number;
-  user?: {
-    firstName: string | null;
-    lastName: string | null;
-    email: string;
-    phoneNumber: string;
-  };
+  pendingJobs: number;
+  bankAccountMasked: string | null;
 }
 
 export interface PendingCrewPayoutsResponse {
   total: number;
-  crews: BackendPendingCrewPayout[];
+  crews: PendingCrewPayout[];
 }
 
-/**
- * Actual backend model: Pending Vendor Agency Retainers from obpark-backend
- * Endpoint: GET /vendor/wallet/admin/pending
- */
 export interface BackendPendingVendorPayout {
   vendorProfileId: string;
   agencyName: string;
-  tradeName: string | null;
-  gstin: string | null;
-  companyPan: string | null;
-  city: string | null;
-  state: string | null;
-  contactName: string | null;
-  email: string | null;
-  phoneNumber: string | null;
+  contactPerson?: string;
+  gstin?: string;
+  bankAccountMasked?: string | null;
   pendingAmount: number;
   pendingTripsCount: number;
 }
@@ -129,83 +60,74 @@ export interface PendingVendorPayoutsResponse {
   vendors: BackendPendingVendorPayout[];
 }
 
-/**
- * Actual backend DTO: Mark Crew Paid from obpark-backend
- * Endpoint: POST /admin/crew/:id/mark-paid
- */
 export interface MarkCrewPaidDto {
+  periodStart: string; // ISO 8601 string (Required)
+  periodEnd: string;   // ISO 8601 string (Required)
   earningIds?: string[];
   referenceNote?: string;
-  periodStart?: string;
-  periodEnd?: string;
 }
 
 export interface MarkCrewPaidResponse {
-  payoutRecordId: string;
-  crewProfileId: string;
-  amountPaid: number;
-  earningsSettled: number;
-  earningIds: string[];
-  paidAt: string;
-  referenceNote: string | null;
+  success: boolean;
+  payout: {
+    id: string;
+    amountPaid: number;
+    jobsSettled: number;
+    referenceNote?: string;
+    paidAt: string;
+  };
 }
 
-export interface CrewPayoutHistoryRecord {
+export interface MarkVendorPaidDto {
+  earningIds?: string[];
+  referenceNote?: string;
+}
+
+export interface SettleVendorPayoutResponse {
+  success: boolean;
+  payoutId: string;
+  agencyName: string;
+  amountSettled: number;
+  tripsSettled: number;
+  reference?: string;
+}
+
+export interface CrewPayoutRecord {
   id: string;
-  amount: number;
+  amount: number | string;
   referenceNote?: string | null;
   periodStart: string;
   periodEnd: string;
   paidAt: string;
-  createdAt: string;
   paidByAdmin?: {
     id: string;
-    firstName?: string | null;
-    lastName?: string | null;
+    firstName?: string;
+    lastName?: string;
   };
+  earnings?: Array<{
+    id: string;
+    netEarnings: number | string;
+    booking?: { bookingCode?: string };
+  }>;
 }
 
 export interface CrewPayoutHistoryResponse {
-  crewProfileId: string;
-  fullName: string;
-  payoutRecords: CrewPayoutHistoryRecord[];
-}
-
-/**
- * Actual backend DTO: Mark Vendor Paid from obpark-backend
- * Endpoint: POST /vendor/wallet/admin/settle/:vendorProfileId
- */
-export interface MarkVendorPaidDto {
-  referenceNote: string;
-  earningIds?: string[];
+  crewProfile: {
+    id: string;
+    fullName: string | null;
+  };
+  total: number;
+  totalPaid: number;
+  payouts: CrewPayoutRecord[];
 }
 
 export interface VendorWalletSummaryResponse {
-  vendorProfile: {
-    id: string;
-    agencyName: string;
-    bankAccountMasked: string | null;
-    bankIfsc: string | null;
-  };
+  agencyName: string;
   wallet: {
     pendingBalance: number;
-    pendingBookingsCount: number;
+    pendingTripsCount: number;
     totalPaidOut: number;
     lifetimeEarnings: number;
+    lifetimeTripsCount: number;
   };
-}
-
-/**
- * GST Filing Reconciliation Export Data Structure
- */
-export interface GSTSettlementExportRow {
-  transactionId: string;
-  bookingId: string;
-  date: string;
-  tripAmount: number;
-  crewShare: number;
-  vendorShare: number;
-  platformCommission: number;
-  splitType: string;
-  status: string;
 }

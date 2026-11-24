@@ -35,6 +35,17 @@ interface PayoutConfirmationModalProps {
   recipient: PayoutRecipient | null;
 }
 
+function getDefaultPeriodDates() {
+  const now = new Date();
+  const start = new Date(now);
+  start.setDate(1); // Default to start of month
+  const toDateInputString = (d: Date) => d.toISOString().split('T')[0];
+  return {
+    startStr: toDateInputString(start),
+    endStr: toDateInputString(now),
+  };
+}
+
 export function PayoutConfirmationModal({
   isOpen,
   onClose,
@@ -42,9 +53,10 @@ export function PayoutConfirmationModal({
 }: PayoutConfirmationModalProps) {
   const user = useAuthStore((state) => state.user);
 
+  const defaultDates = getDefaultPeriodDates();
   const [referenceNote, setReferenceNote] = useState('');
-  const [periodStart, setPeriodStart] = useState('');
-  const [periodEnd, setPeriodEnd] = useState('');
+  const [periodStart, setPeriodStart] = useState(defaultDates.startStr);
+  const [periodEnd, setPeriodEnd] = useState(defaultDates.endStr);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successResult, setSuccessResult] = useState<{
     payoutRecordId: string;
@@ -59,9 +71,20 @@ export function PayoutConfirmationModal({
   const isCrew = recipient.type === 'CREW';
   const isVendor = recipient.type === 'VENDOR';
 
-  // Vendor settlement in obpark-backend requires ADMIN_OBPARK or SUPER_ADMIN_OBPARK role.
+  // Role permissions:
+  // Crew payout requires: ADMIN_OBCREW or SUPER_ADMIN_OBCREW
+  const isAuthorizedForCrew =
+    user?.role === 'ADMIN_OBCREW' ||
+    user?.role === 'SUPER_ADMIN_OBCREW' ||
+    user?.role === 'SUPERADMIN'; // Legacy alias
+
+  // Vendor payout requires: ADMIN_OBPARK or SUPER_ADMIN_OBPARK
   const isAuthorizedForVendor =
-    user?.role === 'SUPERADMIN' || user?.role === 'ADMIN';
+    user?.role === 'ADMIN_OBPARK' ||
+    user?.role === 'SUPER_ADMIN_OBPARK' ||
+    user?.role === 'SUPERADMIN'; // Legacy alias
+
+  const isCurrentActionAuthorized = isCrew ? isAuthorizedForCrew : isAuthorizedForVendor;
 
   const isPending =
     markCrewPaidMutation.isPending || settleVendorPayoutMutation.isPending;
@@ -69,8 +92,8 @@ export function PayoutConfirmationModal({
   const handleClose = () => {
     if (isPending) return;
     setReferenceNote('');
-    setPeriodStart('');
-    setPeriodEnd('');
+    setPeriodStart(defaultDates.startStr);
+    setPeriodEnd(defaultDates.endStr);
     setErrorMessage(null);
     setSuccessResult(null);
     onClose();
@@ -80,6 +103,15 @@ export function PayoutConfirmationModal({
     e.preventDefault();
     setErrorMessage(null);
 
+    if (!isCurrentActionAuthorized) {
+      setErrorMessage(
+        isCrew
+          ? 'Authorization Error: Crew payout recording requires ADMIN_OBCREW or SUPER_ADMIN_OBCREW role.'
+          : 'Authorization Error: Vendor settlement recording requires ADMIN_OBPARK or SUPER_ADMIN_OBPARK role.'
+      );
+      return;
+    }
+
     if (!referenceNote.trim()) {
       setErrorMessage('Bank transaction reference or UTR number is required for audit reconciliation.');
       return;
@@ -87,27 +119,29 @@ export function PayoutConfirmationModal({
 
     try {
       if (isCrew) {
+        const startIso = new Date(`${periodStart}T00:00:00.000Z`).toISOString();
+        const endIso = new Date(`${periodEnd}T23:59:59.999Z`).toISOString();
+
+        if (new Date(endIso).getTime() < new Date(startIso).getTime()) {
+          setErrorMessage('Period End cannot be earlier than Period Start.');
+          return;
+        }
+
         const res = await markCrewPaidMutation.mutateAsync({
           crewProfileId: recipient.id,
           payload: {
             referenceNote: referenceNote.trim(),
             earningIds: recipient.earningIds,
-            periodStart: periodStart ? new Date(periodStart).toISOString() : undefined,
-            periodEnd: periodEnd ? new Date(periodEnd).toISOString() : undefined,
+            periodStart: startIso,
+            periodEnd: endIso,
           },
         });
-        setSuccessResult({
-          payoutRecordId: res.payoutRecordId,
-          amountPaid: res.amountPaid,
-        });
-      } else if (isVendor) {
-        if (!isAuthorizedForVendor) {
-          setErrorMessage(
-            'Authorization Error: Vendor payouts require OBPARK Administrator credentials. Your current role cannot execute vendor payouts.'
-          );
-          return;
-        }
 
+        setSuccessResult({
+          payoutRecordId: res.payout?.id || 'settled-record',
+          amountPaid: res.payout?.amountPaid ?? recipient.pendingAmount,
+        });
+      } else {
         const res = await settleVendorPayoutMutation.mutateAsync({
           vendorProfileId: recipient.id,
           payload: {
@@ -115,9 +149,10 @@ export function PayoutConfirmationModal({
             earningIds: recipient.earningIds,
           },
         });
+
         setSuccessResult({
-          payoutRecordId: res.payoutRecordId,
-          amountPaid: recipient.pendingAmount,
+          payoutRecordId: res.payoutId || 'vendor-settled-record',
+          amountPaid: res.amountSettled ?? recipient.pendingAmount,
         });
       }
     } catch (err: any) {
@@ -142,10 +177,10 @@ export function PayoutConfirmationModal({
             </div>
             <div>
               <h3 className={`${microgrammaBold.className} text-sm font-bold text-slate-900 tracking-wide`}>
-                Confirm External Payout
+                Record External Disbursal
               </h3>
               <p className="text-[11px] text-slate-500">
-                {isCrew ? 'Crew Member Disbursal (85% Split)' : 'Fleet Agency Retainer Settlement (15% Split)'}
+                {isCrew ? 'Crew Payout Ledger Record' : 'Fleet Agency Retainer Settlement Record'}
               </p>
             </div>
           </div>
@@ -170,13 +205,13 @@ export function PayoutConfirmationModal({
                   Payout Successfully Recorded!
                 </h4>
                 <p className="text-xs text-slate-500 max-w-xs mx-auto">
-                  Earnings have been settled and locked against further disbursal. Audit ledger updated.
+                  Earnings have been settled in the backend audit ledger.
                 </p>
               </div>
 
               <div className="bg-slate-50 rounded-xl p-4 border border-slate-200/70 text-left space-y-2 text-xs">
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Recipient:</span>
+                  <span className="text-slate-500">Payee:</span>
                   <span className="font-semibold text-slate-800">{recipient.name}</span>
                 </div>
                 <div className="flex justify-between">
@@ -207,6 +242,14 @@ export function PayoutConfirmationModal({
             </div>
           ) : (
             <form onSubmit={handleConfirmPayout} className="space-y-4">
+              {/* Critical Legal Disclaimer */}
+              <div className="p-3 rounded-lg bg-blue-50 border border-blue-200 text-blue-900 text-xs">
+                <p className="font-bold">Manual Payout Record Audit</p>
+                <p className="text-[11px] text-blue-800 mt-0.5 leading-relaxed">
+                  This action records an externally completed transaction (Bank NEFT/RTGS or UPI). It does <strong>not</strong> initiate an automatic banking disbarment or money transfer.
+                </p>
+              </div>
+
               {/* Recipient Details Card */}
               <div className="p-4 rounded-xl bg-slate-50 border border-slate-200/80 space-y-2.5">
                 <div className="flex items-start justify-between">
@@ -237,19 +280,21 @@ export function PayoutConfirmationModal({
                 <div className="flex items-center gap-1.5 pt-1 text-[11px] text-slate-500 border-t border-slate-200/60">
                   <ShieldCheck className="h-3.5 w-3.5 text-emerald-600 shrink-0" />
                   <span>
-                    Backend API: {isCrew ? 'POST /admin/crew/:id/mark-paid' : 'POST /vendor/wallet/admin/settle/:id'}
+                    Backend Endpoint: {isCrew ? 'POST /admin/crew/:id/mark-paid' : 'POST /vendor/wallet/admin/settle/:id'}
                   </span>
                 </div>
               </div>
 
-              {/* Vendor Authorization Notice */}
-              {isVendor && !isAuthorizedForVendor && (
+              {/* Role Authorization Alert */}
+              {!isCurrentActionAuthorized && (
                 <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs flex items-start gap-2">
                   <Lock className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
                   <div>
-                    <p className="font-semibold">Restricted Action</p>
+                    <p className="font-semibold">Authorization Restriction</p>
                     <p className="text-[11px] text-amber-700 mt-0.5">
-                      Your current account does not have OBPARK Administrator permissions required to settle corporate vendor agency accounts.
+                      {isCrew
+                        ? 'Crew payouts require ADMIN_OBCREW or SUPER_ADMIN_OBCREW role.'
+                        : 'Vendor settlements require ADMIN_OBPARK or SUPER_ADMIN_OBPARK role.'}
                     </p>
                   </div>
                 </div>
@@ -271,15 +316,16 @@ export function PayoutConfirmationModal({
                 />
               </div>
 
-              {/* Optional Date Range for Crew Payouts */}
+              {/* Date Range for Crew Payouts (Required by backend DTO) */}
               {isCrew && (
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
                     <label className="text-[11px] font-semibold text-slate-600 block">
-                      Period Start (Optional)
+                      Period Start <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="date"
+                      required
                       value={periodStart}
                       onChange={(e) => setPeriodStart(e.target.value)}
                       className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg outline-none focus:border-[#074139]"
@@ -287,10 +333,11 @@ export function PayoutConfirmationModal({
                   </div>
                   <div className="space-y-1">
                     <label className="text-[11px] font-semibold text-slate-600 block">
-                      Period End (Optional)
+                      Period End <span className="text-red-500">*</span>
                     </label>
                     <input
                       type="date"
+                      required
                       value={periodEnd}
                       onChange={(e) => setPeriodEnd(e.target.value)}
                       className="w-full px-2.5 py-1.5 text-xs bg-white border border-slate-200 rounded-lg outline-none focus:border-[#074139]"
@@ -299,31 +346,30 @@ export function PayoutConfirmationModal({
                 </div>
               )}
 
-              {/* Error Alert */}
               {errorMessage && (
-                <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs flex items-start gap-2">
-                  <AlertCircle className="h-4 w-4 text-red-600 shrink-0 mt-0.5" />
-                  <p className="leading-relaxed">{errorMessage}</p>
+                <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-red-600" />
+                  <p>{errorMessage}</p>
                 </div>
               )}
 
-              {/* Footer Actions */}
-              <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+              {/* Action Buttons */}
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
                 <button
                   type="button"
                   onClick={handleClose}
                   disabled={isPending}
-                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={isPending || (isVendor && !isAuthorizedForVendor)}
+                  disabled={isPending || !referenceNote.trim() || !isCurrentActionAuthorized}
                   className="px-4 py-2 bg-[#074139] hover:bg-[#0a5e52] text-white text-xs font-bold rounded-lg transition-all flex items-center gap-1.5 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                  <span>{isPending ? 'Recording Payout…' : 'Confirm & Mark Paid'}</span>
+                  Record Payout in Ledger
                 </button>
               </div>
             </form>

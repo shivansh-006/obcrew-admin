@@ -1,20 +1,22 @@
 'use client';
 
-import { useAuthStore, AdminUser } from '@/store/auth.store';
+import { useAuthStore, AdminUser, PlatformRole } from '@/store/auth.store';
+import { BACKEND_BASE_URL } from '@/lib/api/client';
 import { useRouter } from 'next/navigation';
 
 export function useAuth() {
   const router = useRouter();
-  const { user, token, isAuthenticated, setAuth, logout } = useAuthStore();
+  const { user, token, refreshToken, isAuthenticated, setAuth, logout: storeLogout } = useAuthStore();
 
   const loginWithCredentials = async (email: string, password: string): Promise<void> => {
-    const backendUrl = process.env.NEXT_PUBLIC_BACKEND_URL;
-
     let response: Response;
     try {
-      response = await fetch(`${backendUrl}/auth/admin/login`, {
+      response = await fetch(`${BACKEND_BASE_URL}/auth/admin/login`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
         body: JSON.stringify({ email, password }),
       });
     } catch (networkErr) {
@@ -27,7 +29,9 @@ export function useAuth() {
       const message =
         data && typeof data === 'object' && 'message' in data && typeof data.message === 'string'
           ? data.message
-          : 'The email or password was not accepted.';
+          : Array.isArray(data?.message)
+          ? data.message.join(', ')
+          : 'Invalid email or password.';
       throw new Error(message);
     }
 
@@ -36,34 +40,63 @@ export function useAuth() {
     }
 
     const authData = data as {
-      user?: Partial<AdminUser>;
-      accessToken?: unknown;
-      token?: unknown;
+      user?: {
+        id?: string;
+        email?: string;
+        firstName?: string;
+        lastName?: string;
+        phoneNumber?: string;
+        role?: PlatformRole;
+        vendorId?: string;
+      };
+      accessToken?: string;
+      refreshToken?: string;
+      token?: string;
     };
-    const token = authData.accessToken ?? authData.token;
-    if (typeof token !== 'string' || !token.trim()) {
+
+    const accessToken = authData.accessToken ?? authData.token;
+    if (typeof accessToken !== 'string' || !accessToken.trim()) {
       throw new Error('The authentication service did not return an access token.');
     }
 
+    const u = authData.user || {};
+    const fullName = [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || email.split('@')[0];
+
     const adminUser: AdminUser = {
-      id: authData.user?.id || 'admin-1',
-      name: authData.user?.name || email.split('@')[0],
-      email: authData.user?.email || email,
-      role: authData.user?.role || 'ADMIN',
-      vendorId: authData.user?.vendorId,
+      id: u.id || 'admin-1',
+      name: fullName,
+      email: u.email || email,
+      role: u.role || 'ADMIN_OBCREW',
+      phoneNumber: u.phoneNumber,
+      vendorId: u.vendorId,
     };
 
-    setAuth(adminUser, token);
+    setAuth(adminUser, accessToken, authData.refreshToken ?? null);
   };
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    const currentToken = token;
+    storeLogout();
+    if (currentToken) {
+      try {
+        await fetch(`${BACKEND_BASE_URL}/auth/logout`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${currentToken}`,
+          },
+        });
+      } catch {
+        // Revocation best effort
+      }
+    }
     router.push('/login');
   };
 
   return {
     user,
     token,
+    refreshToken,
     isAuthenticated,
     loginWithCredentials,
     logout: handleLogout,

@@ -20,11 +20,10 @@ import {
   VendorWalletSummaryResponse,
   MarkCrewPaidDto,
   MarkVendorPaidDto,
+  MarkCrewPaidResponse,
+  SettleVendorPayoutResponse,
 } from '@/types/settlements';
 
-/**
- * Query Key Factory for Settlements & Ledgers
- */
 export const settlementKeys = {
   all: ['settlements'] as const,
   billingSummary: (cycle?: string) =>
@@ -39,30 +38,34 @@ export const settlementKeys = {
 
 /**
  * Hook: Query System Wallet Totals & Payout Summary
- * Live endpoint: GET /admin/billing/summary?cycle=YYYY-MM
+ * Note: Marked as capability gap if backend has not registered endpoint.
  */
-export function useBillingSummaryQuery(cycle?: string) {
+export function useBillingSummaryQuery(cycle?: string, enabled: boolean = false) {
   return useQuery<BillingSummary, Error>({
     queryKey: settlementKeys.billingSummary(cycle),
     queryFn: () => fetchBillingSummary(cycle),
+    enabled,
+    retry: false,
     staleTime: 60 * 1000,
   });
 }
 
 /**
  * Hook: Query Global Settled Bookings Ledger
+ * Note: Marked as capability gap if backend has not registered endpoint.
  */
-export function useGlobalSettlementLedgerQuery() {
+export function useGlobalSettlementLedgerQuery(enabled: boolean = false) {
   return useQuery<LedgerTransaction[], Error>({
     queryKey: settlementKeys.globalLedger(),
     queryFn: fetchGlobalSettlementLedger,
+    enabled,
     retry: false,
     staleTime: 30 * 1000,
   });
 }
 
 /**
- * Hook: Query Pending Crew Payouts (Real backend endpoint)
+ * Hook: Query Pending Crew Payouts (Active backend endpoint: GET /admin/crew/payouts/pending)
  */
 export function usePendingCrewPayoutsQuery() {
   return useQuery<PendingCrewPayoutsResponse, Error>({
@@ -73,18 +76,22 @@ export function usePendingCrewPayoutsQuery() {
 }
 
 /**
- * Hook: Query Pending Vendor Retainers (Real backend endpoint)
+ * Hook: Query Pending Vendor Retainers
+ * Note: Marked as capability gap if backend has not registered endpoint.
  */
-export function usePendingVendorPayoutsQuery() {
+export function usePendingVendorPayoutsQuery(enabled: boolean = false) {
   return useQuery<PendingVendorPayoutsResponse, Error>({
     queryKey: settlementKeys.pendingVendorPayouts(),
     queryFn: fetchPendingVendorPayouts,
+    enabled,
+    retry: false,
     staleTime: 30 * 1000,
   });
 }
 
 /**
  * Hook: Query Audit History of Payouts for a Crew Member
+ * Active backend endpoint: GET /admin/crew/:id/payout-history
  */
 export function useCrewPayoutHistoryQuery(crewProfileId: string) {
   return useQuery<CrewPayoutHistoryResponse, Error>({
@@ -96,10 +103,9 @@ export function useCrewPayoutHistoryQuery(crewProfileId: string) {
 }
 
 /**
- * Hook: Query Vendor Agency Wallet Overview
- * Accepts optional enabled parameter to prevent unauthorized queries for non-VENDOR roles.
+ * Hook: Query Vendor Agency Wallet Overview (Restricted to VENDOR role sessions)
  */
-export function useVendorWalletSummaryQuery(enabled: boolean = true) {
+export function useVendorWalletSummaryQuery(enabled: boolean = false) {
   return useQuery<VendorWalletSummaryResponse, Error>({
     queryKey: settlementKeys.vendorWalletSummary(),
     queryFn: fetchVendorWalletSummary,
@@ -110,47 +116,42 @@ export function useVendorWalletSummaryQuery(enabled: boolean = true) {
 
 /**
  * Hook: Mutation to Record External Crew Payout
- * Automatically invalidates pending crew payouts and wallet queries on success.
+ * Active backend endpoint: POST /admin/crew/:id/mark-paid
  */
 export function useMarkCrewPaidMutation() {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: ({
-      crewProfileId,
-      payload,
-    }: {
-      crewProfileId: string;
-      payload?: MarkCrewPaidDto;
-    }) => markCrewPaid(crewProfileId, payload),
+  return useMutation<
+    MarkCrewPaidResponse,
+    Error,
+    { crewProfileId: string; payload: MarkCrewPaidDto }
+  >({
+    mutationFn: ({ crewProfileId, payload }) => markCrewPaid(crewProfileId, payload),
     onSuccess: (_, variables) => {
-      // Invalidate pending payouts list and crew audit history
       queryClient.invalidateQueries({ queryKey: settlementKeys.pendingCrewPayouts() });
       queryClient.invalidateQueries({
         queryKey: settlementKeys.crewPayoutHistory(variables.crewProfileId),
       });
-      queryClient.invalidateQueries({ queryKey: settlementKeys.billingSummary() });
     },
   });
 }
 
 /**
  * Hook: Mutation to Settle Vendor Agency Payout
+ * Active backend endpoint: POST /vendor/wallet/admin/settle/:vendorProfileId
  */
 export function useSettleVendorPayoutMutation() {
   const queryClient = useQueryClient();
 
-  return useMutation({
-    mutationFn: ({
-      vendorProfileId,
-      payload,
-    }: {
-      vendorProfileId: string;
-      payload: MarkVendorPaidDto;
-    }) => settleVendorPayout(vendorProfileId, payload),
+  return useMutation<
+    SettleVendorPayoutResponse,
+    Error,
+    { vendorProfileId: string; payload: MarkVendorPaidDto }
+  >({
+    mutationFn: ({ vendorProfileId, payload }) =>
+      settleVendorPayout(vendorProfileId, payload),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: settlementKeys.vendorWalletSummary() });
-      queryClient.invalidateQueries({ queryKey: settlementKeys.billingSummary() });
+      queryClient.invalidateQueries({ queryKey: settlementKeys.pendingVendorPayouts() });
     },
   });
 }
