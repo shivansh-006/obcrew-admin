@@ -241,10 +241,11 @@ The following backend endpoints were assumed by frontend designs but do not exis
 
 ## 13. Commits and Pull Request
 
-- **Base Branch:** `main`
+- **Base Branch:** `main` (`ea3485e`)
 - **Integration Branch:** `integration/obcrew-backend-alignment`
+- **Integration Pull Request:** **[PR #3: feat(integration): obcrew backend contract alignment & cross-repo quality gate](https://github.com/shivansh-006/obcrew-admin/pull/3)**
 - **Preceding Merges:**
-  - `6b4e1e2`: Merge `origin/feat/dev4-settlements-and-incidents`
-  - `be7b92f`: Merge `origin/feat/dev-3-vendor-fleet`
-- **Final Integration Commit:** Verified contract alignment, role segregation, automated test suite, browser testing scripts, and comprehensive integration audit report.
-- **Original Feature PRs:** PR #1 and PR #2 remain intact and untouched.
+  - `6b4e1e2`: Merge `origin/feat/dev4-settlements-and-incidents` (PR #1)
+  - `be7b92f`: Merge `origin/feat/dev-3-vendor-fleet` (PR #2)
+- **Integration Fix Commit:** `86a537f`: feat(integration): align obcrew admin frontend with authoritative backend
+- **Original Feature PRs:** PR #1 and PR #2 remain intact, untouched, and unclosed for independent review.
