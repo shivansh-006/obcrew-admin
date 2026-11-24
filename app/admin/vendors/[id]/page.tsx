@@ -193,6 +193,38 @@ export default function VendorAgencyDetailsPage() {
     },
   });
 
+  const docMutation = useMutation({
+    mutationFn: async ({
+      docId,
+      status,
+      rejectionReason,
+    }: {
+      docId: string;
+      status: 'ACCEPTED' | 'REJECTED' | 'ACTION_REQUIRED';
+      rejectionReason?: string;
+    }) => {
+      return apiClient(
+        `/admin/vendors/${encodeURIComponent(vendorId)}/documents/${encodeURIComponent(docId)}/verify`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ status, rejectionReason }),
+        }
+      );
+    },
+    onSuccess: async (_, variables) => {
+      setActionError('');
+      setNotice(`Document status updated to ${variables.status.toLowerCase()}.`);
+      await queryClient.invalidateQueries({
+        queryKey: ['vendor-agency-profile', vendorId],
+      });
+    },
+    onError: (requestError) => {
+      setActionError(
+        requestError instanceof Error ? requestError.message : 'Unable to verify document.'
+      );
+    },
+  });
+
   const handleStatusChange = (status: AgencyStatus) => {
     if (!agency) return;
     if (status === 'REJECTED') {
@@ -470,31 +502,88 @@ export default function VendorAgencyDetailsPage() {
                   Uploaded KYC Documents ({agency.documents.length})
                 </h3>
               </div>
+              <span className="text-xs text-slate-400">
+                Authoritative verification endpoint: PATCH /admin/vendors/:id/documents/:docId/verify
+              </span>
             </div>
 
             {agency.documents.length === 0 ? (
               <p className="text-xs text-slate-400 italic">No KYC documents uploaded yet.</p>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                {agency.documents.map((doc) => (
-                  <div key={doc.id} className="p-3 rounded-lg border border-slate-200 bg-slate-50 text-xs space-y-1">
-                    <span className="font-bold text-slate-800 block uppercase text-[11px]">
-                      {doc.docType.replace(/_/g, ' ')}
-                    </span>
-                    <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${
-                      doc.status === 'VERIFIED'
-                        ? 'bg-emerald-100 text-emerald-800'
-                        : doc.status === 'REJECTED'
-                        ? 'bg-red-100 text-red-800'
-                        : 'bg-amber-100 text-amber-800'
-                    }`}>
-                      {doc.status}
-                    </span>
-                    {doc.rejectionReason && (
-                      <p className="text-[10px] text-red-600 mt-1 italic">{doc.rejectionReason}</p>
-                    )}
-                  </div>
-                ))}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                {agency.documents.map((doc) => {
+                  const isAccepted = doc.status === 'ACCEPTED' || doc.status === 'VERIFIED';
+                  const isRejected = doc.status === 'REJECTED';
+                  return (
+                    <div
+                      key={doc.id}
+                      className="p-4 rounded-xl border border-slate-200 bg-slate-50 text-xs flex flex-col justify-between space-y-3"
+                    >
+                      <div className="space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="font-bold text-slate-800 uppercase text-[11px] tracking-wide">
+                            {doc.docType.replace(/_/g, ' ')}
+                          </span>
+                          <span
+                            className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              isAccepted
+                                ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                                : isRejected
+                                ? 'bg-red-100 text-red-800 border border-red-200'
+                                : 'bg-amber-100 text-amber-800 border border-amber-200'
+                            }`}
+                          >
+                            {doc.status}
+                          </span>
+                        </div>
+                        {doc.rejectionReason && (
+                          <p className="text-[10px] text-red-600 bg-red-50 p-1.5 rounded border border-red-100 italic">
+                            Reason: {doc.rejectionReason}
+                          </p>
+                        )}
+                        {doc.updatedAt && (
+                          <span className="text-[10px] text-slate-400 block">
+                            Updated: {new Date(doc.updatedAt).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+
+                      {isAuthorizedForVerification && (
+                        <div className="flex items-center gap-2 pt-2 border-t border-slate-200/60">
+                          <button
+                            type="button"
+                            disabled={docMutation.isPending || isAccepted}
+                            onClick={() =>
+                              docMutation.mutate({ docId: doc.id, status: 'ACCEPTED' })
+                            }
+                            className="flex-1 py-1.5 px-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-[11px] font-bold transition-colors disabled:opacity-40"
+                          >
+                            Accept Doc
+                          </button>
+                          <button
+                            type="button"
+                            disabled={docMutation.isPending || isRejected}
+                            onClick={() => {
+                              const reason = window.prompt(
+                                `Rejection reason for ${doc.docType.replace(/_/g, ' ')}:`
+                              );
+                              if (reason && reason.trim()) {
+                                docMutation.mutate({
+                                  docId: doc.id,
+                                  status: 'REJECTED',
+                                  rejectionReason: reason.trim(),
+                                });
+                              }
+                            }}
+                            className="flex-1 py-1.5 px-2 bg-red-600 hover:bg-red-700 text-white rounded text-[11px] font-bold transition-colors disabled:opacity-40"
+                          >
+                            Reject Doc
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -525,7 +614,7 @@ export default function VendorAgencyDetailsPage() {
                       <th className="py-2.5 px-3">Partner Name</th>
                       <th className="py-2.5 px-3">Service Role</th>
                       <th className="py-2.5 px-3">KYC Status</th>
-                      <th className="py-2.5 px-3">Invite Status</th>
+                      <th className="py-2.5 px-3">Invite / Membership State</th>
                       <th className="py-2.5 px-3">Active State</th>
                     </tr>
                   </thead>
@@ -539,22 +628,49 @@ export default function VendorAgencyDetailsPage() {
                           {member.crewProfile?.serviceType || 'DRIVER'}
                         </td>
                         <td className="py-2.5 px-3">
-                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
-                            member.crewProfile?.kycStatus === 'APPROVED'
-                              ? 'bg-emerald-50 text-emerald-700'
-                              : 'bg-amber-50 text-amber-700'
-                          }`}>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              member.crewProfile?.kycStatus === 'APPROVED'
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                                : 'bg-amber-50 text-amber-700 border border-amber-100'
+                            }`}
+                          >
                             {member.crewProfile?.kycStatus || 'PENDING'}
                           </span>
                         </td>
-                        <td className="py-2.5 px-3 font-medium uppercase text-[10px]">
-                          {member.inviteStatus}
+                        <td className="py-2.5 px-3">
+                          {member.inviteStatus === 'ACCEPTED' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                              <CheckCircle2 className="h-3 w-3 text-emerald-600" />
+                              Joined Member
+                            </span>
+                          ) : member.inviteStatus === 'PENDING' ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200">
+                              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                              Consent Pending
+                            </span>
+                          ) : member.inviteStatus === 'DECLINED' ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-600 border border-slate-200">
+                              <XCircle className="h-3 w-3 text-slate-400" />
+                              Declined by Driver
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-100 text-slate-600">
+                              {member.inviteStatus}
+                            </span>
+                          )}
                         </td>
                         <td className="py-2.5 px-3">
-                          <span className={`inline-flex items-center gap-1 font-bold ${
-                            member.isActive ? 'text-emerald-700' : 'text-slate-400'
-                          }`}>
-                            <span className={`h-1.5 w-1.5 rounded-full ${member.isActive ? 'bg-emerald-500' : 'bg-slate-300'}`} />
+                          <span
+                            className={`inline-flex items-center gap-1 font-bold ${
+                              member.isActive ? 'text-emerald-700' : 'text-slate-400'
+                            }`}
+                          >
+                            <span
+                              className={`h-1.5 w-1.5 rounded-full ${
+                                member.isActive ? 'bg-emerald-500' : 'bg-slate-300'
+                              }`}
+                            />
                             {member.isActive ? 'Active' : 'Inactive'}
                           </span>
                         </td>

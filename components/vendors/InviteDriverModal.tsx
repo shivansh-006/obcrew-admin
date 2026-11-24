@@ -7,11 +7,11 @@ import { useMutation } from '@tanstack/react-query';
 import { AlertTriangle, LoaderCircle, ShieldAlert, X } from 'lucide-react';
 import { apiClient, ApiClientError } from '@/lib/api/client';
 
-async function inviteAgencyDriver(phoneNumber: string): Promise<void> {
-  // Backend contract: POST /vendor/fleet/members
+async function inviteAgencyDriver(vendorId: string, phoneNumber: string): Promise<void> {
+  // Authoritative admin contract: POST /admin/vendors/:id/members
   // Body: { phoneNumber: string } (E.164 format with country code)
-  // Guard: RolesGuard @Roles('VENDOR')
-  await apiClient('/vendor/fleet/members', {
+  // Guard: RolesGuard @Roles('ADMIN_OBPARK', 'SUPER_ADMIN_OBPARK')
+  await apiClient(`/admin/vendors/${encodeURIComponent(vendorId)}/members`, {
     method: 'POST',
     body: JSON.stringify({ phoneNumber }),
   });
@@ -25,13 +25,14 @@ interface InviteDriverModalProps {
 }
 
 export function InviteDriverModal({
+  vendorId,
   agencyName,
   onClose,
   onInvited,
 }: InviteDriverModalProps) {
   const [phoneNumber, setPhoneNumber] = useState('+91');
   const inviteMutation = useMutation({
-    mutationFn: (number: string) => inviteAgencyDriver(number),
+    mutationFn: (number: string) => inviteAgencyDriver(vendorId, number),
   });
 
   // Backend DTO validation: Matches /^\+[1-9]\d{9,14}$/
@@ -61,7 +62,8 @@ export function InviteDriverModal({
     if (rawError.status === 403) {
       isPermissionError = true;
       errorMessage =
-        'Authorization Restriction (403): Driver fleet linking is strictly restricted to agency VENDOR sessions. Direct administrator fleet linking is prohibited under Freelance Partner Protection policy.';
+        rawError.message ||
+        'Freelancer Protection (403): Independent freelance partners cannot be bound to an agency fleet.';
     } else if (rawError.status === 404) {
       errorMessage =
         'No verified driver or mechanic was found with this phone number. The partner must first complete individual KYC.';

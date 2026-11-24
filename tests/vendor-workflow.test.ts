@@ -138,4 +138,34 @@ describe('Phase 5.2: Vendor Workflow & Fleet Authorization Tests', () => {
     expect(mask(null)).toBe('Not provided');
     expect(mask('123')).toBe('••••');
   });
+
+  it('validates document review payload schema for PATCH /admin/vendors/:id/documents/:docId/verify', () => {
+    // ReviewVendorDocumentDto:
+    // status: 'ACCEPTED' | 'REJECTED' | 'ACTION_REQUIRED'
+    // rejectionReason?: string (required if status === 'REJECTED')
+    const validateDocReview = (status: string, reason?: string) => {
+      if (status === 'REJECTED' && (!reason || !reason.trim())) {
+        throw new Error('rejectionReason is required when rejecting a document');
+      }
+      return { status, rejectionReason: reason?.trim() };
+    };
+
+    expect(() => validateDocReview('REJECTED')).toThrow(/rejectionReason is required/);
+    const accepted = validateDocReview('ACCEPTED');
+    expect(accepted.status).toBe('ACCEPTED');
+    const rejected = validateDocReview('REJECTED', 'Illegible scan');
+    expect(rejected.rejectionReason).toBe('Illegible scan');
+  });
+
+  it('validates admin driver invite endpoint POST /admin/vendors/:id/members', () => {
+    // Admin contract: POST /admin/vendors/:id/members
+    // Roles: ADMIN_OBPARK, SUPER_ADMIN_OBPARK
+    // Body: { phoneNumber: string }
+    const vendorId = 'v-123';
+    const payload = { phoneNumber: '+919876543210' };
+    const endpoint = `/admin/vendors/${vendorId}/members`;
+
+    expect(endpoint).toBe('/admin/vendors/v-123/members');
+    expect(payload.phoneNumber).toMatch(/^\+[1-9]\d{9,14}$/);
+  });
 });

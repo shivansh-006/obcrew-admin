@@ -28,7 +28,11 @@ import {
   PayoutConfirmationModal,
   PayoutRecipient,
 } from '@/components/settlements/PayoutConfirmationModal';
-import { BackendPendingVendorPayout, PendingCrewPayout } from '@/types/settlements';
+import {
+  BackendPendingVendorPayout,
+  PendingCrewPayout,
+  LedgerTransaction,
+} from '@/types/settlements';
 import { useQueryClient } from '@tanstack/react-query';
 
 function maskBankAccount(accountNumber: string | null | undefined): string {
@@ -57,21 +61,30 @@ export default function SettlementsPage() {
     return `${year}-${month}`;
   });
 
-  // Queries
+  // Queries (all active against authoritative backend with PR #36 remediation)
   const pendingCrewPayoutsQuery = usePendingCrewPayoutsQuery();
-  const billingSummaryQuery = useBillingSummaryQuery(selectedCycle, false); // Capability gap flag
-  const pendingVendorsQuery = usePendingVendorPayoutsQuery(false); // Capability gap flag
-  const globalLedgerQuery = useGlobalSettlementLedgerQuery(false); // Capability gap flag
+  const billingSummaryQuery = useBillingSummaryQuery(selectedCycle, true);
+  const pendingVendorsQuery = usePendingVendorPayoutsQuery(true);
+  const globalLedgerQuery = useGlobalSettlementLedgerQuery(true);
 
   // Computed values
   const pendingCrews: PendingCrewPayout[] = pendingCrewPayoutsQuery.data?.crews ?? [];
+  const pendingVendors: BackendPendingVendorPayout[] = pendingVendorsQuery.data?.vendors ?? [];
+  const globalLedger: LedgerTransaction[] = globalLedgerQuery.data ?? [];
 
   const totalPendingCrewAmount = useMemo(() => {
     return pendingCrews.reduce((acc, c) => acc + (c.pendingAmount || 0), 0);
   }, [pendingCrews]);
 
+  const totalPendingVendorAmount = useMemo(() => {
+    return pendingVendors.reduce((acc, v) => acc + (v.pendingAmount || 0), 0);
+  }, [pendingVendors]);
+
   // Determine exportability
-  const hasExportableData = pendingCrews.length > 0;
+  const hasExportableData =
+    (activeTab === 'PENDING_PAYOUTS' && pendingCrews.length > 0) ||
+    (activeTab === 'VENDOR_RETAINERS' && pendingVendors.length > 0) ||
+    (activeTab === 'GLOBAL_LEDGER' && globalLedger.length > 0);
 
   // Manual Cache Refresh
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -81,9 +94,10 @@ export default function SettlementsPage() {
     setTimeout(() => setIsRefreshing(false), 500);
   };
 
-  // CSV Export Handler
+  // CSV Export Handler based on active tab
   const handleExportCSV = () => {
-    if (pendingCrews.length > 0) {
+    const todayStr = new Date().toISOString().slice(0, 10);
+    if (activeTab === 'PENDING_PAYOUTS' && pendingCrews.length > 0) {
       const headers = [
         'Crew Profile ID',
         'Full Name',
@@ -102,11 +116,51 @@ export default function SettlementsPage() {
         c.pendingAmount,
         c.pendingJobs ?? c.pendingJobsCount ?? 0,
       ]);
-      exportToCSV(
-        `OBCrew_Pending_Payouts_${new Date().toISOString().slice(0, 10)}.csv`,
-        headers,
-        rows
-      );
+      exportToCSV(`OBCrew_Pending_Payouts_${todayStr}.csv`, headers, rows);
+    } else if (activeTab === 'VENDOR_RETAINERS' && pendingVendors.length > 0) {
+      const headers = [
+        'Vendor Profile ID',
+        'Agency Name',
+        'GSTIN',
+        'Phone Number',
+        'Email',
+        'Pending Amount (INR)',
+        'Pending Trips Count',
+      ];
+      const rows = pendingVendors.map((v) => [
+        v.vendorProfileId,
+        v.agencyName,
+        v.gstin || 'N/A',
+        v.phoneNumber || 'N/A',
+        v.email || 'N/A',
+        v.pendingAmount,
+        v.pendingTripsCount,
+      ]);
+      exportToCSV(`OBPark_Pending_Vendor_Retainers_${todayStr}.csv`, headers, rows);
+    } else if (activeTab === 'GLOBAL_LEDGER' && globalLedger.length > 0) {
+      const headers = [
+        'Transaction ID',
+        'Booking Code',
+        'Trip Amount (INR)',
+        'Crew Share (INR)',
+        'Vendor Share (INR)',
+        'Platform Fee (INR)',
+        'Split Type',
+        'Status',
+        'Created At',
+      ];
+      const rows = globalLedger.map((tx) => [
+        tx.id,
+        tx.bookingCode || tx.bookingId,
+        tx.tripAmount,
+        tx.crewShare,
+        tx.vendorShare ?? 0,
+        tx.platformCommission,
+        tx.splitType,
+        tx.status,
+        tx.createdAt,
+      ]);
+      exportToCSV(`OBPlatform_Settlement_Ledger_${todayStr}.csv`, headers, rows);
     }
   };
 
@@ -119,6 +173,19 @@ export default function SettlementsPage() {
       bankAccountMasked: crew.bankAccountMasked || maskBankAccount(crew.bankAccountNumber),
       pendingAmount: crew.pendingAmount,
       pendingJobsCount: crew.pendingJobs ?? crew.pendingJobsCount ?? 0,
+    });
+    setIsModalOpen(true);
+  };
+
+  // Open payout confirmation modal for a specific vendor agency
+  const handleOpenVendorPayout = (vendor: BackendPendingVendorPayout) => {
+    setSelectedRecipient({
+      type: 'VENDOR',
+      id: vendor.vendorProfileId,
+      name: vendor.agencyName,
+      bankAccountMasked: vendor.bankAccountMasked || 'Direct Corporate Settlement',
+      pendingAmount: vendor.pendingAmount,
+      pendingJobsCount: vendor.pendingTripsCount,
     });
     setIsModalOpen(true);
   };
@@ -184,14 +251,16 @@ export default function SettlementsPage() {
           </div>
           <div>
             <p className={`${microgrammaBold.className} text-xl font-bold text-emerald-700`}>
-              15% Platform Split
+              {billingSummaryQuery.data?.totalPlatformCommission !== undefined
+                ? formatCurrency(billingSummaryQuery.data.totalPlatformCommission)
+                : '15% Platform Split'}
             </p>
             <span className="text-[10px] text-slate-400 block mt-0.5">
               Freelance: 85% Crew / 15% Platform · Tri-Party: 70% Crew / 15% Agency / 15% Platform
             </span>
           </div>
           <span className="text-[10px] text-slate-400 block font-mono">
-            Cycle: {selectedCycle}
+            GET /admin/billing/summary · Cycle: {selectedCycle}
           </span>
         </div>
 
@@ -215,31 +284,33 @@ export default function SettlementsPage() {
               {formatCurrency(totalPendingCrewAmount)}
             </p>
           )}
-          <span className="text-[10px] text-slate-400 block">
-            {pendingCrewPayoutsQuery.data
-              ? `${pendingCrewPayoutsQuery.data.total} partner(s) awaiting payout in queue`
-              : 'GET /admin/crew/payouts/pending'}
+          <span className="text-[10px] text-slate-400 block font-mono">
+            GET /admin/crew/payouts/pending · {pendingCrews.length} partner(s) in queue
           </span>
         </div>
 
         {/* Card 3: Agency Retainer Settlement Protocol */}
         <div className="p-5 rounded-xl bg-white border border-slate-200/80 shadow-sm space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500 font-medium">Agency Retainer Protocol</span>
+            <span className="text-xs text-slate-500 font-medium">Pending Agency Retainers</span>
             <div className="h-7 w-7 rounded-lg bg-indigo-50 text-indigo-700 flex items-center justify-center">
               <Building2 className="h-3.5 w-3.5" />
             </div>
           </div>
-          <div>
-            <p className={`${microgrammaBold.className} text-xl font-bold text-slate-900`}>
-              OBPARK Admin
+          {pendingVendorsQuery.isLoading ? (
+            <div className="h-8 w-32 bg-slate-100 animate-pulse rounded my-2" />
+          ) : pendingVendorsQuery.isError ? (
+            <div>
+              <p className="text-xs font-semibold text-red-600">Failed to fetch</p>
+              <span className="text-[10px] text-slate-400">Requires ADMIN_OBPARK</span>
+            </div>
+          ) : (
+            <p className={`${microgrammaBold.className} text-2xl font-bold text-slate-900`}>
+              {formatCurrency(totalPendingVendorAmount)}
             </p>
-            <span className="text-[10px] text-slate-400 block mt-0.5">
-              Settlement endpoint: POST /vendor/wallet/admin/settle/:id
-            </span>
-          </div>
-          <span className="text-[10px] text-slate-400 block">
-            Requires ADMIN_OBPARK or SUPER_ADMIN_OBPARK role
+          )}
+          <span className="text-[10px] text-slate-400 block font-mono">
+            GET /vendor/wallet/admin/pending · {pendingVendors.length} agency(ies)
           </span>
         </div>
       </div>
@@ -265,7 +336,7 @@ export default function SettlementsPage() {
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            Agency Retainers
+            Agency Retainers ({pendingVendors.length})
           </button>
           <button
             onClick={() => setActiveTab('GLOBAL_LEDGER')}
@@ -275,7 +346,7 @@ export default function SettlementsPage() {
                 : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
             }`}
           >
-            Booking Split Ledgers
+            Booking Split Ledgers ({globalLedger.length})
           </button>
         </div>
 
@@ -283,8 +354,8 @@ export default function SettlementsPage() {
           {activeTab === 'PENDING_PAYOUTS'
             ? 'GET /admin/crew/payouts/pending'
             : activeTab === 'VENDOR_RETAINERS'
-            ? 'Capability Gap: GET /vendor/wallet/admin/pending'
-            : 'Capability Gap: GET /crew/wallet/ledger/all'}
+            ? 'GET /vendor/wallet/admin/pending'
+            : 'GET /crew/wallet/ledger/all'}
         </span>
       </div>
 
@@ -400,43 +471,241 @@ export default function SettlementsPage() {
         </div>
       )}
 
-      {/* Tab 2: Vendor Retainers (Capability Gap Notice) */}
+      {/* Tab 2: Vendor Agency Retainers Disbursal Queue */}
       {activeTab === 'VENDOR_RETAINERS' && (
-        <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm p-8 text-center space-y-4">
-          <div className="h-12 w-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto border border-amber-200">
-            <Building2 className="h-6 w-6" />
+        <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
+          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+            <div>
+              <h3 className={`${microgrammaBold.className} text-xs font-bold text-slate-900`}>
+                Corporate Agency Retainers Disbursal Queue
+              </h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                Record bank transfers for aggregated 15% agency fleet commissions. (Requires ADMIN_OBPARK).
+              </p>
+            </div>
+            <span className="text-[11px] text-slate-400">
+              Total: {formatCurrency(totalPendingVendorAmount)}
+            </span>
           </div>
-          <div className="space-y-1.5 max-w-lg mx-auto">
-            <h3 className={`${microgrammaBold.className} text-sm font-bold text-slate-900`}>
-              Backend Capability Gap: Pending Vendor Retainers Endpoint
-            </h3>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              The endpoint <code className="text-[#074139] font-mono px-1 py-0.5 bg-slate-100 rounded">GET /vendor/wallet/admin/pending</code> is not currently registered in the authoritative backend (<code className="font-mono text-[11px]">obpark-backend:integration/final-all</code>).
-            </p>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Vendor agency settlements are executed via <code className="text-[#074139] font-mono">POST /vendor/wallet/admin/settle/:vendorProfileId</code> under <code className="font-semibold text-slate-700">ADMIN_OBPARK</code> or <code className="font-semibold text-slate-700">SUPER_ADMIN_OBPARK</code> authorization.
-            </p>
-          </div>
+
+          {pendingVendorsQuery.isLoading ? (
+            <div className="p-8 space-y-4">
+              {[1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center justify-between p-4 border border-slate-100 rounded-lg animate-pulse">
+                  <div className="space-y-2">
+                    <div className="h-4 w-40 bg-slate-100 rounded" />
+                    <div className="h-3 w-60 bg-slate-50 rounded" />
+                  </div>
+                  <div className="h-8 w-24 bg-slate-100 rounded" />
+                </div>
+              ))}
+            </div>
+          ) : pendingVendorsQuery.isError ? (
+            <div className="p-12 text-center space-y-3">
+              <div className="h-10 w-10 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto">
+                <AlertCircle className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-bold text-slate-900">Failed to Load Vendor Retainers</p>
+                <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
+                  {pendingVendorsQuery.error.message || 'Vendor retainer endpoints require ADMIN_OBPARK authorization.'}
+                </p>
+              </div>
+              <button
+                onClick={() => pendingVendorsQuery.refetch()}
+                className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
+          ) : pendingVendors.length === 0 ? (
+            <div className="p-12 text-center space-y-3">
+              <div className="h-10 w-10 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto border border-emerald-200">
+                <Building2 className="h-5 w-5" />
+              </div>
+              <div>
+                <p className={`${microgrammaBold.className} text-xs font-bold text-slate-800`}>
+                  All Agency Retainers Disbursed
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  There are no pending balances awaiting payout to corporate agency partners.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {pendingVendors.map((vendor) => (
+                <div
+                  key={vendor.vendorProfileId}
+                  className="p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-slate-50/60 transition-colors"
+                >
+                  <div className="space-y-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-slate-900">
+                        {vendor.agencyName}
+                      </span>
+                      {vendor.tradeName && vendor.tradeName !== vendor.agencyName && (
+                        <span className="text-[11px] text-slate-400">
+                          ({vendor.tradeName})
+                        </span>
+                      )}
+                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-100">
+                        {vendor.pendingTripsCount} trip(s)
+                      </span>
+                    </div>
+
+                    <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-4 gap-y-1">
+                      <span className="font-mono">GSTIN: {vendor.gstin || 'N/A'}</span>
+                      {vendor.city && <span>Location: {vendor.city}{vendor.state ? `, ${vendor.state}` : ''}</span>}
+                      {vendor.phoneNumber && <span>Phone: {vendor.phoneNumber}</span>}
+                      {vendor.email && <span>Email: {vendor.email}</span>}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-4 self-start sm:self-center">
+                    <div className="text-right">
+                      <span className="text-[10px] text-slate-400 block font-medium uppercase">
+                        Pending Retainer
+                      </span>
+                      <span className={`${microgrammaBold.className} text-sm font-bold text-indigo-700 block`}>
+                        {formatCurrency(vendor.pendingAmount)}
+                      </span>
+                    </div>
+
+                    <button
+                      onClick={() => handleOpenVendorPayout(vendor)}
+                      className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded-lg flex items-center gap-1.5 transition-colors shadow-sm"
+                    >
+                      <span>Settle Retainer</span>
+                      <ArrowRight className="h-3 w-3" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
-      {/* Tab 3: Global Settled Ledgers (Capability Gap Notice) */}
+      {/* Tab 3: Global Settled Ledgers Table */}
       {activeTab === 'GLOBAL_LEDGER' && (
-        <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm p-8 text-center space-y-4">
-          <div className="h-12 w-12 rounded-xl bg-slate-100 text-slate-600 flex items-center justify-center mx-auto border border-slate-200">
-            <ReceiptText className="h-6 w-6" />
+        <div className="bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden">
+          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
+            <div>
+              <h3 className={`${microgrammaBold.className} text-xs font-bold text-slate-900`}>
+                Global Booking Commission Splits Ledger
+              </h3>
+              <p className="text-[10px] text-slate-400 mt-0.5">
+                Real-time transaction splits (85/15 freelance or 70/15/15 tri-party) verified across the entire platform.
+              </p>
+            </div>
+            <span className="text-[11px] text-slate-400 font-mono">
+              Total Records: {globalLedger.length}
+            </span>
           </div>
-          <div className="space-y-1.5 max-w-lg mx-auto">
-            <h3 className={`${microgrammaBold.className} text-sm font-bold text-slate-900`}>
-              Backend Capability Gap: Global Ledger Aggregate Endpoint
-            </h3>
-            <p className="text-xs text-slate-500 leading-relaxed">
-              The endpoint <code className="text-[#074139] font-mono px-1 py-0.5 bg-slate-100 rounded">GET /crew/wallet/ledger/all</code> is not currently implemented in the authoritative backend (<code className="font-mono text-[11px]">obpark-backend:integration/final-all</code>).
-            </p>
-            <p className="text-[11px] text-slate-400 leading-relaxed">
-              Per-trip revenue splits are recorded atomically in the database upon booking completion into <code className="font-mono">CrewEarning</code> (85% freelance or 70% tri-party) and <code className="font-mono">VendorEarning</code> (15%). Aggregate listing endpoints will be introduced in future backend revisions.
-            </p>
-          </div>
+
+          {globalLedgerQuery.isLoading ? (
+            <div className="p-8 space-y-3">
+              {[1, 2, 3, 4].map((i) => (
+                <div key={i} className="h-10 bg-slate-50 animate-pulse rounded-lg" />
+              ))}
+            </div>
+          ) : globalLedgerQuery.isError ? (
+            <div className="p-12 text-center space-y-3">
+              <div className="h-10 w-10 rounded-full bg-red-50 text-red-600 flex items-center justify-center mx-auto">
+                <AlertCircle className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-xs font-bold text-slate-900">Failed to Load Global Ledgers</p>
+                <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
+                  {globalLedgerQuery.error.message || 'Unable to fetch global settlement ledger.'}
+                </p>
+              </div>
+              <button
+                onClick={() => globalLedgerQuery.refetch()}
+                className="px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
+          ) : globalLedger.length === 0 ? (
+            <div className="p-12 text-center space-y-3">
+              <div className="h-10 w-10 rounded-full bg-slate-100 text-slate-600 flex items-center justify-center mx-auto border border-slate-200">
+                <ReceiptText className="h-5 w-5" />
+              </div>
+              <div>
+                <p className={`${microgrammaBold.className} text-xs font-bold text-slate-800`}>
+                  No Ledger Transactions Found
+                </p>
+                <p className="text-[11px] text-slate-400 mt-1">
+                  Completed bookings will atomically record commission distributions in this ledger.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 text-slate-500 font-semibold uppercase text-[10px] border-b border-slate-100">
+                  <tr>
+                    <th className="py-2.5 px-3">Booking Code</th>
+                    <th className="py-2.5 px-3">Split Model</th>
+                    <th className="py-2.5 px-3 text-right">Gross Trip</th>
+                    <th className="py-2.5 px-3 text-right">Crew Share</th>
+                    <th className="py-2.5 px-3 text-right">Vendor Share</th>
+                    <th className="py-2.5 px-3 text-right">Platform Fee</th>
+                    <th className="py-2.5 px-3 text-center">Status</th>
+                    <th className="py-2.5 px-3 text-right">Date</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 text-slate-700">
+                  {globalLedger.map((tx) => (
+                    <tr key={tx.id} className="hover:bg-slate-50/60 transition-colors">
+                      <td className="py-2.5 px-3 font-mono font-semibold text-slate-900">
+                        {tx.bookingCode || tx.bookingId.slice(0, 8)}
+                      </td>
+                      <td className="py-2.5 px-3">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                            tx.splitType === 'TRI_PARTY_70_15_15'
+                              ? 'bg-indigo-50 text-indigo-700 border border-indigo-100'
+                              : 'bg-emerald-50 text-emerald-700 border border-emerald-100'
+                          }`}
+                        >
+                          {tx.splitType === 'TRI_PARTY_70_15_15' ? '70/15/15 Tri-Party' : '85/15 Direct'}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-medium text-slate-900">
+                        {formatCurrency(tx.tripAmount)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-medium text-emerald-700">
+                        {formatCurrency(tx.crewShare)}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-medium text-indigo-700">
+                        {tx.vendorShare ? formatCurrency(tx.vendorShare) : '—'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-medium text-slate-700">
+                        {formatCurrency(tx.platformCommission)}
+                      </td>
+                      <td className="py-2.5 px-3 text-center">
+                        <span
+                          className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                            tx.status === 'SETTLED'
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-amber-100 text-amber-800'
+                          }`}
+                        >
+                          {tx.status}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-3 text-right text-slate-500 text-[11px]">
+                        {formatDateTime(tx.createdAt)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

@@ -5,7 +5,8 @@ export type PlatformRole =
   | 'SUPER_ADMIN_OBCREW'
   | 'ADMIN_OBPARK'
   | 'SUPER_ADMIN_OBPARK'
-  | 'ADMIN';
+  | 'ADMIN'
+  | 'SUPERADMIN';
 
 export interface AdminUser {
   id: string;

@@ -48,11 +48,18 @@ export interface PendingCrewPayoutsResponse {
 export interface BackendPendingVendorPayout {
   vendorProfileId: string;
   agencyName: string;
+  companyName?: string;
+  tradeName?: string;
+  city?: string;
+  state?: string;
   contactPerson?: string;
   gstin?: string;
+  email?: string | null;
+  phoneNumber?: string | null;
   bankAccountMasked?: string | null;
   pendingAmount: number;
   pendingTripsCount: number;
+  pendingTrips?: number;
 }
 
 export interface PendingVendorPayoutsResponse {

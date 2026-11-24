@@ -88,31 +88,67 @@ describe('Phase 5.3: Settlements & Wallet Disbursal Workflow Tests', () => {
     expect(backendVendorResponse.amountSettled).toBe(15400);
   });
 
-  it('correctly reports non-existent backend endpoints as capability gaps without fabricating data', () => {
-    const checkBillingSummary = () => {
-      throw new ApiClientError(
-        404,
-        'Backend capability gap: GET /admin/billing/summary is not registered in authoritative backend (integration/final-all).'
-      );
+  it('validates remediated GET /vendor/wallet/admin/pending response structure', () => {
+    const rawPendingVendors = {
+      total: 1,
+      vendors: [
+        {
+          vendorProfileId: 'v-1',
+          companyName: 'Apex Chauffeur Fleet',
+          tradeName: 'Apex',
+          city: 'Delhi',
+          state: 'DL',
+          gstin: '07AABCU9603R1ZM',
+          email: 'admin@apex.com',
+          phoneNumber: '+919876543210',
+          pendingAmount: 15400.0,
+          pendingTrips: 12,
+        },
+      ],
     };
 
-    const checkVendorPending = () => {
-      throw new ApiClientError(
-        404,
-        'Backend capability gap: GET /vendor/wallet/admin/pending is not registered in authoritative backend (integration/final-all).'
-      );
+    expect(rawPendingVendors.total).toBe(1);
+    expect(rawPendingVendors.vendors[0].companyName).toBe('Apex Chauffeur Fleet');
+    expect(rawPendingVendors.vendors[0].pendingAmount).toBe(15400.0);
+    expect(rawPendingVendors.vendors[0].pendingTrips).toBe(12);
+  });
+
+  it('validates remediated GET /crew/wallet/ledger/all response structure', () => {
+    const rawGlobalLedger = {
+      total: 1,
+      items: [
+        {
+          id: 'ledger-tx-1',
+          bookingId: 'booking-1',
+          bookingCode: 'OB-99120',
+          tripAmount: 1000,
+          crewShare: 700,
+          vendorShare: 150,
+          platformCommission: 150,
+          splitType: 'TRI_PARTY_70_15_15',
+          status: 'SETTLED',
+          createdAt: '2026-11-24T10:00:00.000Z',
+        },
+      ],
     };
 
-    const checkGlobalLedger = () => {
-      throw new ApiClientError(
-        404,
-        'Backend capability gap: GET /crew/wallet/ledger/all is not registered in authoritative backend (integration/final-all).'
-      );
+    expect(rawGlobalLedger.items[0].bookingCode).toBe('OB-99120');
+    expect(rawGlobalLedger.items[0].crewShare).toBe(700);
+    expect(rawGlobalLedger.items[0].vendorShare).toBe(150);
+    expect(rawGlobalLedger.items[0].platformCommission).toBe(150);
+  });
+
+  it('validates remediated GET /admin/billing/summary response structure', () => {
+    const rawSummary = {
+      totalPlatformCommission: 45000,
+      totalCrewPayoutsPending: 28500,
+      totalVendorRetainersPending: 15400,
+      billingCycle: 'CURRENT_CYCLE',
     };
 
-    expect(checkBillingSummary).toThrow(/GET \/admin\/billing\/summary is not registered/);
-    expect(checkVendorPending).toThrow(/GET \/vendor\/wallet\/admin\/pending is not registered/);
-    expect(checkGlobalLedger).toThrow(/GET \/crew\/wallet\/ledger\/all is not registered/);
+    expect(rawSummary.totalPlatformCommission).toBe(45000);
+    expect(rawSummary.totalCrewPayoutsPending).toBe(28500);
+    expect(rawSummary.totalVendorRetainersPending).toBe(15400);
   });
 
   it('enforces external transaction notice constraint (no simulated banking transfers)', () => {

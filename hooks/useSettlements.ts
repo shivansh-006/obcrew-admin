@@ -38,28 +38,28 @@ export const settlementKeys = {
 
 /**
  * Hook: Query System Wallet Totals & Payout Summary
- * Note: Marked as capability gap if backend has not registered endpoint.
+ * Backend: GET /admin/billing/summary
  */
-export function useBillingSummaryQuery(cycle?: string, enabled: boolean = false) {
+export function useBillingSummaryQuery(cycle?: string, enabled: boolean = true) {
   return useQuery<BillingSummary, Error>({
     queryKey: settlementKeys.billingSummary(cycle),
     queryFn: () => fetchBillingSummary(cycle),
     enabled,
-    retry: false,
+    retry: 1,
     staleTime: 60 * 1000,
   });
 }
 
 /**
  * Hook: Query Global Settled Bookings Ledger
- * Note: Marked as capability gap if backend has not registered endpoint.
+ * Backend: GET /crew/wallet/ledger/all
  */
-export function useGlobalSettlementLedgerQuery(enabled: boolean = false) {
+export function useGlobalSettlementLedgerQuery(enabled: boolean = true) {
   return useQuery<LedgerTransaction[], Error>({
     queryKey: settlementKeys.globalLedger(),
-    queryFn: fetchGlobalSettlementLedger,
+    queryFn: () => fetchGlobalSettlementLedger(),
     enabled,
-    retry: false,
+    retry: 1,
     staleTime: 30 * 1000,
   });
 }
@@ -77,14 +77,14 @@ export function usePendingCrewPayoutsQuery() {
 
 /**
  * Hook: Query Pending Vendor Retainers
- * Note: Marked as capability gap if backend has not registered endpoint.
+ * Backend: GET /vendor/wallet/admin/pending
  */
-export function usePendingVendorPayoutsQuery(enabled: boolean = false) {
+export function usePendingVendorPayoutsQuery(enabled: boolean = true) {
   return useQuery<PendingVendorPayoutsResponse, Error>({
     queryKey: settlementKeys.pendingVendorPayouts(),
     queryFn: fetchPendingVendorPayouts,
     enabled,
-    retry: false,
+    retry: 1,
     staleTime: 30 * 1000,
   });
 }
