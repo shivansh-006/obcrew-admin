@@ -2,32 +2,25 @@
 
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [isLoaded, setIsLoaded] = useState(false);
+  const [queryClient] = useState(() => new QueryClient());
 
   useEffect(() => {
-    // Check if token exists in localStorage
     const token = localStorage.getItem('obcrew_token');
 
     if (!token) {
-      // In local development, automatically initialize a development session
-      // so the user and developers are never locked out of inspecting pages
-      const devUser = {
-        id: 'admin-dev-01',
-        name: 'Shiva (Ops Lead)',
-        email: 'shiva@obrive.com',
-        role: 'SUPERADMIN',
-      };
-      localStorage.setItem('obcrew_token', 'mock-dev-admin-token');
-      localStorage.setItem('obcrew_user', JSON.stringify(devUser));
-      setIsLoaded(true);
-    } else {
-      setIsLoaded(true);
+      localStorage.removeItem('obcrew_token');
+      localStorage.removeItem('obcrew_user');
+      router.replace('/login?next=/admin');
+      return;
     }
+    setIsLoaded(true);
   }, [router]);
 
   if (!isLoaded) {
@@ -42,14 +35,16 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <div className="min-h-screen flex bg-slate-50 font-sans">
-      <aside className="w-64 h-screen sticky top-0 hidden md:block shrink-0">
-        <Sidebar />
-      </aside>
-      <div className="flex-1 flex flex-col min-w-0">
-        <Header />
-        <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full">{children}</main>
+    <QueryClientProvider client={queryClient}>
+      <div className="min-h-screen flex bg-slate-50 font-sans">
+        <aside className="w-64 h-screen sticky top-0 hidden md:block shrink-0">
+          <Sidebar />
+        </aside>
+        <div className="flex-1 flex flex-col min-w-0">
+          <Header />
+          <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full">{children}</main>
+        </div>
       </div>
-    </div>
+    </QueryClientProvider>
   );
 }
