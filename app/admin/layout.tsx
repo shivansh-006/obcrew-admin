@@ -2,64 +2,76 @@
 
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { useAuthStore } from '@/store/auth.store';
+import { useAuthStore, AUTH_STORAGE_KEYS } from '@/store/auth.store';
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [isLoaded, setIsLoaded] = useState(false);
-  const { user, setAuth } = useAuthStore();
+  const { user, token, setAuth } = useAuthStore();
+  const firstCheck = useRef(true);
 
   useEffect(() => {
-    const token = localStorage.getItem('obcrew_token');
+    const storedToken = typeof window !== 'undefined' ? localStorage.getItem(AUTH_STORAGE_KEYS.token) : null;
+    const effectiveToken = token || storedToken;
 
-    if (!token) {
-      localStorage.removeItem('obcrew_token');
-      localStorage.removeItem('obcrew_refresh_token');
-      localStorage.removeItem('obcrew_user');
-      const target = pathname ? `?next=${encodeURIComponent(pathname)}` : '';
-      router.replace(`/login${target}`);
+    if (!effectiveToken) {
+      if (typeof window !== 'undefined') {
+        localStorage.removeItem(AUTH_STORAGE_KEYS.token);
+        localStorage.removeItem(AUTH_STORAGE_KEYS.refreshToken);
+        localStorage.removeItem(AUTH_STORAGE_KEYS.user);
+      }
+      const search = typeof window !== 'undefined' ? window.location.search : '';
+      const target = firstCheck.current && pathname
+        ? `/login?next=${encodeURIComponent(pathname + search)}`
+        : '/login';
+      firstCheck.current = false;
+      setIsLoaded(false);
+      router.replace(target);
       return;
     }
 
     // Hydrate store if user missing
-    if (!user) {
+    if (!user && typeof window !== 'undefined') {
       try {
-        const stored = localStorage.getItem('obcrew_user');
-        const refreshToken = localStorage.getItem('obcrew_refresh_token');
-        if (stored) {
-          const parsedUser = JSON.parse(stored);
-          setAuth(parsedUser, token, refreshToken);
+        const storedUser = localStorage.getItem(AUTH_STORAGE_KEYS.user);
+        const storedRefresh = localStorage.getItem(AUTH_STORAGE_KEYS.refreshToken);
+        if (storedUser) {
+          const parsed = JSON.parse(storedUser);
+          setAuth(parsed, effectiveToken, storedRefresh);
         }
       } catch {
         // Continue
       }
     }
 
+    firstCheck.current = false;
     setIsLoaded(true);
-  }, [router, pathname, user, setAuth]);
+  }, [router, pathname, token, user, setAuth]);
 
   if (!isLoaded) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
-        <div className="flex flex-col items-center gap-2">
-          <div className="h-8 w-8 border-2 border-[#074139] border-t-transparent rounded-full animate-spin" />
-          <p className="text-xs text-slate-500 font-medium">Loading Operations Hub…</p>
+      <div className="flex h-screen w-screen items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin" />
+          <p className="text-sm font-medium text-gray-500">Checking authentication...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen flex bg-slate-50 font-sans">
-      <aside className="w-64 h-screen sticky top-0 hidden md:block shrink-0">
-        <Sidebar />
-      </aside>
-      <div className="flex-1 flex flex-col min-w-0">
+    <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
+      <Sidebar />
+      <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <Header />
-        <main className="flex-1 p-6 md:p-8 max-w-7xl mx-auto w-full">{children}</main>
+        <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-8">
+          <div className="max-w-7xl mx-auto space-y-6">
+            {children}
+          </div>
+        </main>
       </div>
     </div>
   );

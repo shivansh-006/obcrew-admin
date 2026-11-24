@@ -2,16 +2,10 @@ import { create } from 'zustand';
 
 export type PlatformRole =
   | 'ADMIN_OBCREW'
-  | 'ADMIN_OBPARK'
   | 'SUPER_ADMIN_OBCREW'
+  | 'ADMIN_OBPARK'
   | 'SUPER_ADMIN_OBPARK'
-  | 'SUPERADMIN'
-  | 'ADMIN'
-  | 'OPS_MANAGER'
-  | 'VENDOR'
-  | 'DRIVER'
-  | 'MECHANIC'
-  | 'CUSTOMER';
+  | 'ADMIN';
 
 export interface AdminUser {
   id: string;
@@ -22,70 +16,75 @@ export interface AdminUser {
   vendorId?: string | null;
 }
 
+export const AUTH_STORAGE_KEYS = {
+  token: 'obcrew_token',
+  refreshToken: 'obcrew_refresh_token',
+  user: 'obcrew_user',
+} as const;
+
 interface AuthState {
   user: AdminUser | null;
   token: string | null;
   refreshToken: string | null;
   isAuthenticated: boolean;
   setAuth: (user: AdminUser, token: string, refreshToken?: string | null) => void;
+  setTokens: (token: string, refreshToken?: string | null) => void;
   setToken: (token: string) => void;
   logout: () => void;
 }
 
-function getStoredUser(): AdminUser | null {
-  if (typeof window === 'undefined') return null;
+function read(key: string): string | null {
+  return typeof window !== 'undefined' ? localStorage.getItem(key) : null;
+}
+
+function readUser(): AdminUser | null {
+  if (typeof window === 'undefined' || !localStorage.getItem(AUTH_STORAGE_KEYS.token)) return null;
   try {
-    const raw = localStorage.getItem('obcrew_user');
-    return raw ? JSON.parse(raw) : null;
+    const raw = localStorage.getItem(AUTH_STORAGE_KEYS.user);
+    return raw ? (JSON.parse(raw) as AdminUser) : null;
   } catch {
     return null;
   }
 }
 
-function getStoredToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('obcrew_token');
-}
-
-function getStoredRefreshToken(): string | null {
-  if (typeof window === 'undefined') return null;
-  return localStorage.getItem('obcrew_refresh_token');
+function writeTokens(token: string, refreshToken: string | null) {
+  if (typeof window === 'undefined') return;
+  localStorage.setItem(AUTH_STORAGE_KEYS.token, token);
+  if (refreshToken) localStorage.setItem(AUTH_STORAGE_KEYS.refreshToken, refreshToken);
+  else localStorage.removeItem(AUTH_STORAGE_KEYS.refreshToken);
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
-  user: getStoredUser(),
-  token: getStoredToken(),
-  refreshToken: getStoredRefreshToken(),
-  isAuthenticated: !!getStoredToken(),
+  user: readUser(),
+  token: read(AUTH_STORAGE_KEYS.token),
+  refreshToken: read(AUTH_STORAGE_KEYS.refreshToken),
+  isAuthenticated: !!read(AUTH_STORAGE_KEYS.token),
 
   setAuth: (user, token, refreshToken = null) => {
+    writeTokens(token, refreshToken);
     if (typeof window !== 'undefined') {
-      localStorage.setItem('obcrew_token', token);
-      localStorage.setItem('obcrew_user', JSON.stringify(user));
-      if (refreshToken) {
-        localStorage.setItem('obcrew_refresh_token', refreshToken);
-      }
+      localStorage.setItem(AUTH_STORAGE_KEYS.user, JSON.stringify(user));
     }
-    set({
-      user,
-      token,
-      refreshToken: refreshToken || getStoredRefreshToken(),
-      isAuthenticated: true,
-    });
+    set({ user, token, refreshToken, isAuthenticated: true });
+  },
+
+  setTokens: (token, refreshToken = null) => {
+    writeTokens(token, refreshToken);
+    set({ token, refreshToken, isAuthenticated: true });
   },
 
   setToken: (token) => {
     if (typeof window !== 'undefined') {
-      localStorage.setItem('obcrew_token', token);
+      localStorage.setItem(AUTH_STORAGE_KEYS.token, token);
     }
     set({ token, isAuthenticated: true });
   },
 
   logout: () => {
     if (typeof window !== 'undefined') {
-      localStorage.removeItem('obcrew_token');
-      localStorage.removeItem('obcrew_refresh_token');
-      localStorage.removeItem('obcrew_user');
+      localStorage.removeItem(AUTH_STORAGE_KEYS.token);
+      localStorage.removeItem(AUTH_STORAGE_KEYS.refreshToken);
+      localStorage.removeItem(AUTH_STORAGE_KEYS.user);
     }
     set({ user: null, token: null, refreshToken: null, isAuthenticated: false });
   },

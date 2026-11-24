@@ -1,17 +1,29 @@
 'use client';
 
-import { useAuthStore, AdminUser, PlatformRole } from '@/store/auth.store';
+import { useAuthStore, AdminUser, PlatformRole, AUTH_STORAGE_KEYS } from '@/store/auth.store';
 import { BACKEND_BASE_URL } from '@/lib/api/client';
 import { useRouter } from 'next/navigation';
+import { apiFetch } from '@/lib/api';
+
+async function readErrorMessage(res: Response): Promise<string> {
+  try {
+    const body = await res.json();
+    if (Array.isArray(body?.message)) return body.message.join(', ');
+    if (typeof body?.message === 'string') return body.message;
+  } catch {
+    // no JSON body
+  }
+  return '';
+}
 
 export function useAuth() {
   const router = useRouter();
-  const { user, token, refreshToken, isAuthenticated, setAuth, logout: storeLogout } = useAuthStore();
+  const { user, token, refreshToken, isAuthenticated, setAuth, logout } = useAuthStore();
 
   const loginWithCredentials = async (email: string, password: string): Promise<void> => {
-    let response: Response;
+    let res: Response;
     try {
-      response = await fetch(`${BACKEND_BASE_URL}/auth/admin/login`, {
+      res = await fetch(`${BACKEND_BASE_URL}/auth/admin/login`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -19,22 +31,18 @@ export function useAuth() {
         },
         body: JSON.stringify({ email, password }),
       });
-    } catch (networkErr) {
-      console.warn('Unable to reach the admin authentication service.', networkErr);
+    } catch {
       throw new Error('Unable to reach the authentication service. Check the backend connection and try again.');
     }
 
-    const data = await response.json().catch(() => null);
-    if (!response.ok) {
-      const message =
-        data && typeof data === 'object' && 'message' in data && typeof data.message === 'string'
-          ? data.message
-          : Array.isArray(data?.message)
-          ? data.message.join(', ')
-          : 'Invalid email or password.';
-      throw new Error(message);
+    if (!res.ok) {
+      if (res.status === 401) throw new Error('Invalid email or password.');
+      if (res.status === 429) throw new Error('Too many attempts. Please wait a minute.');
+      const message = await readErrorMessage(res);
+      throw new Error(message || `Sign in failed (${res.status}). Please try again.`);
     }
 
+    const data = await res.json().catch(() => null);
     if (!data || typeof data !== 'object') {
       throw new Error('The authentication service returned an invalid response.');
     }
@@ -43,6 +51,7 @@ export function useAuth() {
       user?: {
         id?: string;
         email?: string;
+        name?: string;
         firstName?: string;
         lastName?: string;
         phoneNumber?: string;
@@ -60,7 +69,10 @@ export function useAuth() {
     }
 
     const u = authData.user || {};
-    const fullName = [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || email.split('@')[0];
+    const fullName =
+      u.name ||
+      [u.firstName, u.lastName].filter(Boolean).join(' ').trim() ||
+      email.split('@')[0];
 
     const adminUser: AdminUser = {
       id: u.id || 'admin-1',
@@ -75,21 +87,24 @@ export function useAuth() {
   };
 
   const handleLogout = async () => {
-    const currentToken = token;
-    storeLogout();
+    const currentToken = useAuthStore.getState().token;
     if (currentToken) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 3000);
       try {
-        await fetch(`${BACKEND_BASE_URL}/auth/logout`, {
+        await apiFetch('/auth/logout', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${currentToken}`,
-          },
+          signal: controller.signal,
+          redirectOnAuthFailure: false,
         });
       } catch {
         // Revocation best effort
+      } finally {
+        clearTimeout(timer);
       }
     }
+
+    logout();
     router.push('/login');
   };
 

@@ -22,8 +22,13 @@ function ObCrewLoginForm() {
   const searchParams = useSearchParams();
   const { loginWithCredentials } = useAuth();
 
-  const isSessionExpired = searchParams.get('session_expired') === 'true';
-  const nextTarget = searchParams.get('next') || '/admin';
+  const isSessionExpired = searchParams.get('expired') === '1';
+  const rawNext = searchParams.get('next');
+  // Only follow paths inside this app (blocks redirects to other sites)
+  const nextTarget =
+    rawNext && rawNext.startsWith('/') && !rawNext.startsWith('//') && !rawNext.startsWith('/\\')
+      ? rawNext
+      : '/admin';
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
