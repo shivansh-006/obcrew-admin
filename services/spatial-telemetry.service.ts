@@ -16,7 +16,7 @@ export async function fetchActiveDispatches(token: string, page = 1, limit = 50)
   return result;
 }
 
-function isDispatchPage(value: unknown): value is ActiveDispatchPage {
+export function isDispatchPage(value: unknown): value is ActiveDispatchPage {
   if (!value || typeof value !== 'object') return false;
   const page = value as Record<string, unknown>;
   return Array.isArray(page.data) && page.data.every(isDispatch) && typeof page.total === 'number' && typeof page.page === 'number' && typeof page.limit === 'number';
