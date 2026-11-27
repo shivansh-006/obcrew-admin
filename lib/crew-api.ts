@@ -182,3 +182,65 @@ export async function verifyCrew(id: string, body: VerifyCrewBody) {
   });
   return res.json();
 }
+
+
+// ---------- Dashboard helpers ----------
+
+export interface CrewSurveillanceItem {
+  id: string;
+  fullName: string | null;
+  serviceType: ServiceType;
+  isOnline: boolean;
+  isBusy: boolean;
+  avgRating: number | string | null;
+  liveStatus: 'ON_TRIP' | 'IDLE';
+  location: unknown | null;
+  activeBookingCode: string | null;
+  user?: { phoneNumber: string | null };
+}
+
+export interface CrewSurveillanceResponse {
+  total: number;
+  liveLocation: 'available' | 'unavailable';
+  data: CrewSurveillanceItem[];
+}
+
+/** Number of approved crew for one service type (uses the list total). */
+export async function getCrewCount(serviceType: ServiceType): Promise<number> {
+  const res = await send('/admin/crew', {
+    query: { kycStatus: 'APPROVED', serviceType, limit: 1 },
+  });
+  const body: CrewListResponse = await res.json();
+  return body.total ?? 0;
+}
+
+/** Approved crew who are online or on a trip right now. */
+export async function getCrewSurveillance(): Promise<CrewSurveillanceResponse> {
+  const res = await send('/admin/crew/surveillance');
+  return res.json();
+}
+
+/**
+ * Newest pending crew, newest first.
+ * The backend lists pending crew oldest first, so read the last items instead.
+ */
+export async function getNewestPendingCrew(
+  count = 3
+): Promise<{ total: number; data: CrewListItem[] }> {
+  const { total } = await getPendingCrew({ limit: 1 });
+  if (total === 0) return { total, data: [] };
+
+  const start = Math.max(0, total - count); // position of the first item we need
+  const firstPage = Math.floor(start / count) + 1;
+  const lastPage = Math.floor((total - 1) / count) + 1;
+
+  const pages = await Promise.all(
+    Array.from({ length: lastPage - firstPage + 1 }, (_, i) =>
+      getPendingCrew({ page: firstPage + i, limit: count })
+    )
+  );
+
+  const items = pages.flatMap((p) => p.data);
+  const offset = start - (firstPage - 1) * count;
+  return { total, data: items.slice(offset, offset + count).reverse() };
+}
