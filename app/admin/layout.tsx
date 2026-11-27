@@ -10,6 +10,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter();
   const pathname = usePathname();
   const [isLoaded, setIsLoaded] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { user, token, setAuth } = useAuthStore();
   const firstCheck = useRef(true);
 
@@ -64,10 +65,28 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
-      <Sidebar />
+      {/* Desktop Sidebar */}
+      <div className="hidden md:flex h-full shrink-0">
+        <Sidebar />
+      </div>
+
+      {/* Mobile Drawer */}
+      {mobileMenuOpen && (
+        <div className="fixed inset-0 z-50 md:hidden flex">
+          <div
+            className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm transition-opacity"
+            onClick={() => setMobileMenuOpen(false)}
+          />
+          <div className="relative z-10 h-full">
+            <Sidebar onNavigate={() => setMobileMenuOpen(false)} />
+          </div>
+        </div>
+      )}
+
+      {/* Main Content Area */}
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
-        <Header />
-        <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-8">
+        <Header onOpenMobileMenu={() => setMobileMenuOpen(true)} />
+        <main className="flex-1 overflow-y-auto bg-gray-50/50 p-4 sm:p-6 md:p-8">
           <div className="max-w-7xl mx-auto space-y-6">
             {children}
           </div>

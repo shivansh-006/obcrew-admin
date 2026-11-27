@@ -1,7 +1,7 @@
 import { useAuthStore } from '@/store/auth.store';
 
 export const BACKEND_BASE_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:3001';
+  process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:4000';
 
 export class ApiClientError extends Error {
   status: number;
