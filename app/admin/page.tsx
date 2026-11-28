@@ -2,7 +2,19 @@
 
 import { Component, type ReactNode } from 'react';
 
-import { Users, MapPin, Building2, AlertTriangle, ArrowUpRight, TrendingUp, RefreshCw } from 'lucide-react';
+import {
+  Users,
+  MapPin,
+  Building2,
+  AlertTriangle,
+  ArrowUpRight,
+  TrendingUp,
+  RefreshCw,
+  BarChart3,
+  Percent,
+  Clock,
+  CheckCircle2,
+} from 'lucide-react';
 import { useIsFetching, useQuery, useQueryClient } from '@tanstack/react-query';
 import { microgrammaBold } from '@/lib/fonts';
 import Link from 'next/link';
@@ -15,11 +27,27 @@ import {
 } from '@/lib/crew-api';
 import { fetchIncidents } from '@/lib/api/incidents';
 import { apiClient } from '@/lib/api/client';
-import { fetchGlobalSettlementLedger } from '@/lib/api/settlements';
+import { fetchBillingSummary, fetchGlobalSettlementLedger } from '@/lib/api/settlements';
 import { formatCurrency } from '@/lib/utils';
 
 // Dashboard auto-refresh interval (guide: every 30 seconds)
 const REFRESH_INTERVAL = 30_000;
+
+// Billing summary fields used by the dashboard (GMV and settled payouts come from the backend summary)
+interface DashboardBilling {
+  cycleGmv?: number;
+  totalGmv?: number;
+  cycleCommission?: number;
+  allTimePlatformCommission?: number;
+  cycleCrewPayoutsPending?: number;
+  cycleVendorRetainersPending?: number;
+  totalCrewPayoutsPending?: number;
+  totalVendorRetainersPending?: number;
+  cycleSettledPayouts?: number;
+  totalSettledPayouts?: number;
+}
+
+const sumAmounts = (...values: (number | undefined)[]) => values.reduce<number>((acc, v) => acc + (v ?? 0), 0);
 
 const SERVICE_LABEL: Record<ServiceType, string> = {
   DRIVER: 'CHAUFFEUR DRIVER',
@@ -134,6 +162,12 @@ export default function DashboardPage() {
     queryFn: () => fetchGlobalSettlementLedger({ limit: 3 }),
   });
 
+  const billingQuery = useQuery({
+    queryKey: ['dashboard', 'billing'],
+    refetchInterval: REFRESH_INTERVAL,
+    queryFn: async () => (await fetchBillingSummary()) as unknown as DashboardBilling,
+  });
+
   const liveSubtitle = (serviceType: ServiceType) =>
     liveCrewQuery.isError ? 'Live status unavailable' : liveSummary(liveCrewQuery.data?.data, serviceType);
 
@@ -197,6 +231,41 @@ export default function DashboardPage() {
   ];
 
   const pendingTotal = pendingCrewQuery.data?.total;
+  const billing = billingQuery.data;
+  const billingCards = [
+    {
+      label: 'GMV',
+      value: billing?.cycleGmv,
+      allTime: billing?.totalGmv,
+      icon: BarChart3,
+      color: 'text-emerald-600',
+      bg: 'bg-emerald-50',
+    },
+    {
+      label: 'Platform Commission',
+      value: billing?.cycleCommission,
+      allTime: billing?.allTimePlatformCommission,
+      icon: Percent,
+      color: 'text-cyan-600',
+      bg: 'bg-cyan-50',
+    },
+    {
+      label: 'Payouts Pending',
+      value: sumAmounts(billing?.cycleCrewPayoutsPending, billing?.cycleVendorRetainersPending),
+      allTime: sumAmounts(billing?.totalCrewPayoutsPending, billing?.totalVendorRetainersPending),
+      icon: Clock,
+      color: 'text-amber-600',
+      bg: 'bg-amber-50',
+    },
+    {
+      label: 'Payouts Settled',
+      value: billing?.cycleSettledPayouts,
+      allTime: billing?.totalSettledPayouts,
+      icon: CheckCircle2,
+      color: 'text-indigo-600',
+      bg: 'bg-indigo-50',
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -296,6 +365,58 @@ export default function DashboardPage() {
           );
         })}
       </div>
+
+      {/* Billing Summary (this month) */}
+      <SectionBoundary label="This month's billing">
+        <div className="space-y-3">
+          <h2 className={`${microgrammaBold.className} text-sm font-semibold text-slate-900`}>
+            This month&apos;s billing
+          </h2>
+          {billingQuery.isError ? (
+            <div className="p-5 rounded-xl bg-white border border-slate-200/80 shadow-sm text-xs text-red-600">
+              {errorText(billingQuery.error)} billing summary ·{' '}
+              <button type="button" onClick={() => billingQuery.refetch()} className="font-semibold underline">
+                Retry
+              </button>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+              {billingCards.map((b) => {
+                const Icon = b.icon;
+                return (
+                  <Link
+                    key={b.label}
+                    href="/admin/settlements"
+                    className="block p-5 rounded-xl bg-white border border-slate-200/80 shadow-sm hover:border-[#074139]/30 hover:shadow-md transition-all"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-medium text-slate-500">{b.label}</span>
+                      <div className={`h-8 w-8 rounded-lg ${b.bg} ${b.color} flex items-center justify-center`}>
+                        <Icon className="h-4 w-4" />
+                      </div>
+                    </div>
+                    <div className="mt-3">
+                      {billingQuery.isPending ? (
+                        <>
+                          <div className="h-8 w-24 rounded bg-slate-100 animate-pulse" />
+                          <div className="h-3 w-28 mt-2 rounded bg-slate-100 animate-pulse" />
+                        </>
+                      ) : (
+                        <>
+                          <span className={`${microgrammaBold.className} text-xl font-bold text-slate-900`}>
+                            {formatCurrency(b.value ?? 0)}
+                          </span>
+                          <p className="text-[11px] text-slate-400 mt-1">All-time: {formatCurrency(b.allTime ?? 0)}</p>
+                        </>
+                      )}
+                    </div>
+                  </Link>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </SectionBoundary>
 
       {/* Quick Action Matrix */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
