@@ -64,7 +64,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="flex h-screen bg-gray-50 overflow-hidden font-sans">
-      <Sidebar />
+      <aside className = "w-64 shrink-0 h-full hidden md:block">
+        <Sidebar />
+      </aside>
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <Header />
         <main className="flex-1 overflow-y-auto bg-gray-50/50 p-6 md:p-8">
