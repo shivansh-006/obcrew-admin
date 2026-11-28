@@ -21,6 +21,7 @@ const NAV_GROUPS = [
     label: 'Command Central',
     items: [
       { href: '/admin', label: 'Operations Hub', icon: LayoutDashboard, exact: true },
+      { href: '/admin/bookings', label: 'Dispatch Operations', icon: Radio },
       { href: '/admin/live-map', label: 'Spatial Telemetry', icon: MapPin },
     ],
   },
